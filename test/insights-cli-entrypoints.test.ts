@@ -168,6 +168,91 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     expect(invalid.stderr).toContain("positive integer");
     expect(requests).toEqual([]);
   });
+
+  it.each([false, true])("exits 0 quietly when the reader closes stdout early json=%s", async (json) => {
+    // About 5 MiB of output, far more than a pipe buffers, so the writer is still writing when the reader leaves.
+    const content = "x".repeat(512 * 1024);
+    respond = (response) => response.end(JSON.stringify({
+      success: true, insights: insights.map((item) => ({ ...item, content })),
+    }));
+    const result = await run(compatibility, json ? ["example", "--json"] : ["example"], {}, { closeStdoutAfterFirstChunk: true });
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(result.stdout.length).toBeGreaterThan(0);
+  }, 20_000);
+
+  it("keeps the usage exit status when stderr is closed", async () => {
+    const result = await run(compatibility, ["example", "--limit=0"], {}, { closeStderr: true });
+    expect(result.code).toBe(2);
+    expect(requests).toEqual([]);
+  });
+
+  it.each([
+    { "Content-Length": "100000" },
+    { "Content-Length": "100000", Connection: "close" },
+    {},
+  ])("reports a body cut mid-stream with headers %j as a connection failure", async (headers) => {
+    respond = (response) => {
+      response.writeHead(200, { "Content-Type": "application/json", ...headers });
+      response.write('{"success":true,"insights":[', () => response.destroy());
+    };
+    const result = await run(compatibility, ["example"]);
+    expect(result).toMatchObject({ code: 1, stdout: "" });
+    expect(result.stderr).toContain("connection failed");
+    expect(result.stderr).not.toContain("malformed response");
+  });
+
+  it("exits promptly after an error status with an unfinished body", async () => {
+    respond = (response) => { response.writeHead(503); response.write("partial"); };
+    const started = Date.now();
+    const result = await run(compatibility, ["example"], { AGENTMEMORY_INSIGHTS_TIMEOUT_MS: "10000" });
+    expect(result).toMatchObject({ code: 1, stdout: "" });
+    expect(result.stderr).toContain("backend failure: HTTP 503");
+    expect(Date.now() - started).toBeLessThan(4000);
+  }, 20_000);
+
+  it.each(["http://", "http:///"])("rejects hostless AGENTMEMORY_URL %j without a request", async (url) => {
+    const result = await run(compatibility, ["example"], { AGENTMEMORY_URL: url });
+    expect(result).toMatchObject({ code: 1, stdout: "" });
+    expect(result.stderr).toContain("configuration error: AGENTMEMORY_URL");
+    expect(requests).toEqual([]);
+  });
+
+  it("names III_REST_PORT when the fallback port is unusable", async () => {
+    // Never use a port value that maps to the daemon's default: this run must not reach any server.
+    const result = await run(compatibility, ["example"], { AGENTMEMORY_URL: "", III_REST_PORT: "70000" });
+    expect(result).toMatchObject({ code: 1, stdout: "" });
+    expect(result.stderr).toContain("configuration error: III_REST_PORT");
+    expect(result.stderr).not.toContain("AGENTMEMORY_URL must");
+    expect(requests).toEqual([]);
+  });
+
+  it("caps the limit at 100", async () => {
+    const over = await run(compatibility, compatibility ? ["example", "101"] : ["example", "--limit", "101"]);
+    expect(over.code).toBe(2);
+    expect(over.stderr).toContain("no greater than 100");
+    expect(requests).toEqual([]);
+    const cap = await run(compatibility, compatibility ? ["example", "100", "--json"] : ["example", "--limit", "100", "--json"]);
+    expect(cap.code).toBe(0);
+    expect(JSON.parse(cap.stdout)).toMatchObject({ limit: 100 });
+    expect(JSON.parse(cap.stdout).insights).toHaveLength(insights.length);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body).toMatchObject({ query: "example" });
+  });
+
+  it("rejects a query of only one-character terms", async () => {
+    const result = await run(compatibility, ["a b"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("no searchable terms");
+    expect(requests).toEqual([]);
+  });
+
+  it("notes ignored one-character terms and still sends the query unchanged", async () => {
+    const result = await run(compatibility, ["x example", "--json"]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('ignoring one-character term(s) "x"');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body).toMatchObject({ query: "x example" });
+  });
 });
 
 it("accepts and deprecates the obsolete pool argument without changing the request", async () => {
