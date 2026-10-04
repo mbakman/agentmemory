@@ -59,6 +59,25 @@ function codeSuffix(error: unknown): string {
   return code ? ` (${code})` : "";
 }
 
+// Text output only (JSON stays raw): server-supplied text must not reach the terminal as control
+// sequences.
+
+/** Turns CR and CRLF into \n, then drops C0 and C1 controls other than tab and \n. */
+function printable(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
+const LINE_BREAK = /[\n\u{2028}\u{2029}]/u;
+
+/**
+ * printable, then every whitespace run that holds a line break (\n, U+2028, U+2029) becomes one
+ * space. Matching whole runs keeps this linear: matching optional whitespace on both sides of a
+ * break instead backtracks quadratically on a long run without one.
+ */
+function printableLine(text: string): string {
+  return printable(text).replace(/\s+/g, (run) => (LINE_BREAK.test(run) ? " " : run)).trim();
+}
+
 function configError(detail: string): Error {
   return new Error(`configuration error: ${detail}`);
 }
@@ -74,6 +93,19 @@ function positiveInteger(value: string, label: string, max?: number): number {
       : `${label} must be a positive integer no greater than ${max}`);
   }
   return parsed;
+}
+
+/**
+ * The compatibility form's max and pool. A word in their place is usually the rest of an unquoted
+ * multi-word query, so its error says so.
+ */
+function compatNumber(value: string, label: string, max?: number): number {
+  try {
+    return positiveInteger(value, label, max);
+  } catch (error) {
+    if (!Number.isNaN(Number(value))) throw error;
+    throw new Error(`${(error as Error).message} (quote multi-word queries)`);
+  }
 }
 
 /**
@@ -121,12 +153,15 @@ export function parseInsightArgs(
   if (positional.length > (compatibility ? 3 : 1)) {
     throw new Error("quote queries containing spaces; too many positional arguments");
   }
-  if (positional[1] !== undefined) {
-    if (limit !== undefined) throw new Error("use either max or --limit, not both");
-    limit = positiveInteger(positional[1], "max", MAX_INSIGHT_LIMIT);
-  }
+  // Only the compatibility form reaches here with a max or pool. Both values are checked before the
+  // max/--limit conflict, so a stray query word is reported as one.
+  const max = positional[1] === undefined ? undefined : compatNumber(positional[1], "max", MAX_INSIGHT_LIMIT);
   // The pool is ignored, so it stays uncapped: existing scripts pass values such as 3000.
-  if (positional[2] !== undefined) positiveInteger(positional[2], "pool");
+  if (positional[2] !== undefined) compatNumber(positional[2], "pool");
+  if (max !== undefined) {
+    if (limit !== undefined) throw new Error("use either max or --limit, not both");
+    limit = max;
+  }
   // Checked last so shape errors are reported first. The server drops one-character terms, so a
   // query made only of them would come back as a successful empty search that never matched anything.
   if (splitSearchTerms(query).terms.length === 0) {
@@ -212,24 +247,42 @@ function resolveTimeout(env: NodeJS.ProcessEnv): number {
   }
 }
 
+/** Plain-object headers for fetch, checked up front so an unsendable secret is a configuration error. */
+function requestHeaders(env: NodeJS.ProcessEnv): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (!env.AGENTMEMORY_SECRET) return headers;
+  headers.Authorization = `Bearer ${env.AGENTMEMORY_SECRET}`;
+  try {
+    new Headers(headers);
+  } catch {
+    // The TypeError's message quotes the header value, secret included, so it is neither shown nor chained.
+    throw configError("AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF");
+  }
+  return headers;
+}
+
 export async function searchInsights(
   options: InsightSearchOptions,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<CompactInsight[]> {
   const endpoint = resolveSearchEndpoint(env);
   const timeout = resolveTimeout(env);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (env.AGENTMEMORY_SECRET) headers.Authorization = `Bearer ${env.AGENTMEMORY_SECRET}`;
+  const headers = requestHeaders(env);
   // parseInsightArgs enforces the cap; this keeps direct callers within it too.
   const body = JSON.stringify({ query: options.query, limit: Math.min(options.limit, MAX_INSIGHT_LIMIT) });
+  // Failures name the origin, never the path or the rest of the configured URL.
+  const { origin } = endpoint;
+  const timedOut = (error: unknown) => new Error(
+    `timeout: no complete response from ${origin} within ${timeout} ms${codeSuffix(error)}; check the daemon or raise AGENTMEMORY_INSIGHTS_TIMEOUT_MS`,
+  );
   // Created after every configuration check, so the whole budget goes to the request itself.
   const signal = AbortSignal.timeout(timeout);
   let response: Response;
   try {
     response = await fetch(endpoint, { method: "POST", headers, body, signal });
-  } catch {
-    if (signal.aborted) throw new Error(`timeout: insight search exceeded ${timeout} ms`);
-    throw new Error("connection failed: could not reach the agentmemory search endpoint; check AGENTMEMORY_URL and the running daemon");
+  } catch (error) {
+    if (signal.aborted) throw timedOut(error);
+    throw new Error(`connection failed: could not reach ${origin}${codeSuffix(error)}; check AGENTMEMORY_URL and that the agentmemory daemon is running`);
   }
   if (!response.ok) {
     // An unread body keeps the connection open, and with it a process that exits naturally,
@@ -244,8 +297,8 @@ export async function searchInsights(
   try {
     text = await response.text();
   } catch (error) {
-    if (signal.aborted) throw new Error(`timeout: insight search exceeded ${timeout} ms`);
-    throw new Error(`connection failed: the response from the insight search endpoint ended before it was complete${codeSuffix(error)}`);
+    if (signal.aborted) throw timedOut(error);
+    throw new Error(`connection failed: the response from ${origin} ended before it was complete${codeSuffix(error)}`);
   }
   let data: unknown;
   try {
@@ -302,11 +355,21 @@ async function writeOutput(text: string, toStderr = false): Promise<void> {
   });
 }
 
+/** --help or -h anywhere before "--" asks for help; after "--" they are query text. */
+function wantsHelp(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") return false;
+    if (arg === "--help" || arg === "-h") return true;
+  }
+  return false;
+}
+
 export async function runInsightsCli(args: string[], compatibility = false): Promise<number> {
   installOutputGuards();
-  const prefix = "agentmemory insights";
+  // Usage errors, notices, and failures name the command as it was invoked.
+  const prefix = compatibility ? "agentmemory-insights" : "agentmemory insights";
   try {
-    if (args[0] === "--help" || args[0] === "-h") {
+    if (wantsHelp(args)) {
       await writeOutput(INSIGHTS_HELP);
       return 0;
     }
@@ -318,7 +381,7 @@ export async function runInsightsCli(args: string[], compatibility = false): Pro
       return 2;
     }
     if (options.deprecatedPool) {
-      await writeOutput("agentmemory-insights: the pool argument is deprecated and ignored; native search searches the full eligible corpus\n", true);
+      await writeOutput(`${prefix}: the pool argument is deprecated and ignored; native search searches the full eligible corpus\n`, true);
     }
     const { ignored } = splitSearchTerms(options.query);
     if (ignored.length > 0) {
@@ -329,11 +392,11 @@ export async function runInsightsCli(args: string[], compatibility = false): Pro
     if (options.json) {
       await writeOutput(`${JSON.stringify({ success: true, query: options.query, limit: options.limit, insights })}\n`);
     } else if (insights.length === 0) {
-      await writeOutput(`No insights match ${JSON.stringify(options.query)}.\n`);
+      await writeOutput(`No insights match ${quote(options.query)}.\n`);
     } else {
-      await writeOutput(`Showing ${insights.length} insight(s) for ${JSON.stringify(options.query)} (limit ${options.limit}, ranked by relevance/confidence/recency).\n\n`);
+      await writeOutput(`Showing ${insights.length} insight(s) for ${quote(options.query)} (limit ${options.limit}, ranked by relevance/confidence/recency).\n\n`);
       for (const insight of insights) {
-        await writeOutput(`[${insight.confidence.toFixed(2)}; score ${insight.score.toFixed(3)}] ${insight.title}\n${insight.content}\n\n`);
+        await writeOutput(`[${insight.confidence.toFixed(2)}; score ${insight.score.toFixed(3)}] ${printableLine(insight.title)}\n${printable(insight.content)}\n\n`);
       }
     }
     return 0;

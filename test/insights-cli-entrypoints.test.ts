@@ -253,6 +253,86 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     expect(requests).toHaveLength(1);
     expect(requests[0].body).toMatchObject({ query: "x example" });
   });
+
+  const prefix = compatibility ? "agentmemory-insights: " : "agentmemory insights: ";
+
+  it("shows help for --help or -h anywhere before --", async () => {
+    for (const args of [["example", "--limit", "5", "--help"], ["--unknown", "-h"], ["example", "--json", "-h"]]) {
+      const result = await run(compatibility, args);
+      expect(result).toMatchObject({ code: 0, stderr: "" });
+      expect(result.stdout).toMatch(/^Usage: agentmemory insights <query>/);
+    }
+    expect(requests).toEqual([]);
+  });
+
+  it("searches for --help when it follows --", async () => {
+    const result = await run(compatibility, ["--", "--help"]);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(result.stdout).not.toContain("Usage:");
+    expect(result.stdout).toContain('for "--help"');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body).toMatchObject({ query: "--help" });
+  });
+
+  it("prefixes usage errors, notices and failures with the invoked name", async () => {
+    const usage = await run(compatibility, ["example", "--limit=0"]);
+    expect(usage.code).toBe(2);
+    expect(usage.stderr).toMatch(new RegExp(`^${prefix}limit must be a positive integer`));
+    const note = await run(compatibility, ["x example", "--json"]);
+    expect(note).toMatchObject({
+      code: 0,
+      stderr: `${prefix}note: ignoring one-character term(s) "x"; the server searches only terms of 2 or more characters\n`,
+    });
+    respond = (response) => { response.writeHead(503); response.end("failure"); };
+    const failed = await run(compatibility, ["example"]);
+    expect(failed).toMatchObject({ code: 1, stdout: "", stderr: `${prefix}backend failure: HTTP 503\n` });
+  });
+
+  it("names the endpoint origin and error code on connection failures and timeouts", async () => {
+    // A port that was just released refuses connections.
+    const released = createServer();
+    await new Promise<void>((done) => released.listen(0, "127.0.0.1", done));
+    const address = released.address();
+    if (!address || typeof address === "string") throw new Error("missing released port");
+    await new Promise<void>((done) => released.close(() => done()));
+    const refused = await run(compatibility, ["example"], { AGENTMEMORY_URL: `http://127.0.0.1:${address.port}/prefix` });
+    expect(refused).toMatchObject({
+      code: 1, stdout: "",
+      stderr: `${prefix}connection failed: could not reach http://127.0.0.1:${address.port} (ECONNREFUSED); check AGENTMEMORY_URL and that the agentmemory daemon is running\n`,
+    });
+    respond = (response) => { setTimeout(() => response.end("{}"), 500).unref(); };
+    const slow = await run(compatibility, ["example"], { AGENTMEMORY_INSIGHTS_TIMEOUT_MS: "50" });
+    expect(slow).toMatchObject({
+      code: 1, stdout: "",
+      stderr: `${prefix}timeout: no complete response from ${baseUrl} within 50 ms; check the daemon or raise AGENTMEMORY_INSIGHTS_TIMEOUT_MS\n`,
+    });
+  });
+
+  it.each(["a\nb", "😀"])("rejects the unsendable AGENTMEMORY_SECRET %j without echoing it", async (secret) => {
+    const result = await run(compatibility, ["example"], { AGENTMEMORY_SECRET: secret });
+    expect(result).toMatchObject({
+      code: 1, stdout: "",
+      stderr: `${prefix}configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF\n`,
+    });
+    expect(result.stderr).not.toContain(secret);
+    expect(requests).toEqual([]);
+  });
+
+  it("strips control characters from text output and keeps JSON raw", async () => {
+    const title = "Bad\x1b[31m\x07\ntitle\u{2029}end\x9b";
+    const content = "line1\r\nline2\x07\x1b\x85\rline3";
+    respond = (response) => response.end(JSON.stringify({ success: true, insights: [{ ...insights[0], title, content }] }));
+    const text = await run(compatibility, ["example\x7f"]);
+    expect(text).toMatchObject({ code: 0, stderr: "" });
+    expect(text.stdout).toContain('Showing 1 insight(s) for "example\\u007f"');
+    expect(text.stdout).toContain("] Bad[31m title end\nline1\nline2\nline3\n");
+    expect(text.stdout).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u{2028}\u{2029}]/u);
+    const json = await run(compatibility, ["example\x7f", "--json"]);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({ query: "example\x7f", insights: [{ title, content }] });
+    respond = (response) => response.end(JSON.stringify({ success: true, insights: [] }));
+    expect((await run(compatibility, ["example\x7f"])).stdout).toBe('No insights match "example\\u007f".\n');
+  });
 });
 
 it("accepts and deprecates the obsolete pool argument without changing the request", async () => {
@@ -261,4 +341,16 @@ it("accepts and deprecates the obsolete pool argument without changing the reque
   expect(result.stderr).toContain("pool argument is deprecated and ignored");
   expect(JSON.parse(result.stdout).insights).toHaveLength(2);
   expect(requests[0].body).toEqual({ query: "example", limit: 2 });
+});
+
+it("names the compatibility command in the deprecation notice", async () => {
+  const result = await run(true, ["example", "2", "3000", "--json"]);
+  expect(result.stderr).toMatch(/^agentmemory-insights: the pool argument is deprecated and ignored/);
+});
+
+it("hints at quoting an unquoted multi-word query in compatibility mode", async () => {
+  const result = await run(true, ["database", "performance"]);
+  expect(result.code).toBe(2);
+  expect(result.stderr).toMatch(/^agentmemory-insights: max must be a positive integer no greater than 100 \(quote multi-word queries\)\n/);
+  expect(requests).toEqual([]);
 });

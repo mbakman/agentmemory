@@ -235,3 +235,79 @@ describe("insight search endpoint and response handling", () => {
     await expect(searchInsights(parseInsightArgs(["checks", "--limit=1"]), {})).resolves.toBeTruthy();
   });
 });
+
+describe("insight CLI diagnostics", () => {
+  const remote = { AGENTMEMORY_URL: "http://127.0.0.1:4555/prefix" };
+
+  it("names the origin and error code when the endpoint cannot be reached", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: new Error("bad port") })));
+    const options = parseInsightArgs(["checks"]);
+    expect(await failure(searchInsights(options, remote))).toBe(
+      "connection failed: could not reach http://127.0.0.1:4555 (ECONNREFUSED); check AGENTMEMORY_URL and that the agentmemory daemon is running",
+    );
+    // Without a code there is nothing to add.
+    expect(await failure(searchInsights(options, remote))).toBe(
+      "connection failed: could not reach http://127.0.0.1:4555; check AGENTMEMORY_URL and that the agentmemory daemon is running",
+    );
+  });
+
+  it("names the origin when the response ends early or the timeout fires", async () => {
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) controller.enqueue(new TextEncoder().encode('{"success":true,"insights":['));
+        else controller.error(new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET" } }));
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(body))
+      .mockImplementationOnce((_url: URL, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+      })));
+    const options = parseInsightArgs(["checks"]);
+    expect(await failure(searchInsights(options, remote))).toBe(
+      "connection failed: the response from http://127.0.0.1:4555 ended before it was complete (UND_ERR_SOCKET)",
+    );
+    expect(await failure(searchInsights(options, { ...remote, AGENTMEMORY_INSIGHTS_TIMEOUT_MS: "20" }))).toBe(
+      "timeout: no complete response from http://127.0.0.1:4555 within 20 ms; check the daemon or raise AGENTMEMORY_INSIGHTS_TIMEOUT_MS",
+    );
+  });
+
+  it.each(["a\nb", "😀", "fixture-secret\nsecond-line"])(
+    "maps the unsendable AGENTMEMORY_SECRET %j to a configuration error that never echoes it", async (secret) => {
+      const fetchMock = emptySearch();
+      vi.stubGlobal("fetch", fetchMock);
+      const message = await failure(searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: secret }));
+      expect(message).toBe(
+        "configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF",
+      );
+      expect(message).not.toContain(secret);
+      expect(message).not.toContain("Bearer");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+  it("still sends a secret that fetch can send", async () => {
+    const fetchMock = emptySearch();
+    vi.stubGlobal("fetch", fetchMock);
+    // fetch trims surrounding whitespace from header values, so a trailing newline is sendable.
+    await searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: "test-secret\n" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hints at quoting when a compatibility max or pool is a word", () => {
+    expect(() => parseInsightArgs(["database", "performance"], true))
+      .toThrow("max must be a positive integer no greater than 100 (quote multi-word queries)");
+    expect(() => parseInsightArgs(["db", "5", "tuning"], true))
+      .toThrow("pool must be a positive integer (quote multi-word queries)");
+    // The word is the likelier mistake, so it is reported instead of the max/--limit conflict.
+    expect(() => parseInsightArgs(["database", "performance", "--limit=2"], true))
+      .toThrow("(quote multi-word queries)");
+    // Numbers that are out of range get no hint.
+    expect(() => parseInsightArgs(["db", "0"], true)).toThrow(/^max must be a positive integer no greater than 100$/);
+    expect(() => parseInsightArgs(["db", "101"], true)).toThrow(/^max must be a positive integer no greater than 100$/);
+    expect(() => parseInsightArgs(["db", "5", "0"], true)).toThrow(/^pool must be a positive integer$/);
+    expect(() => parseInsightArgs(["db", "3", "--limit=2"], true)).toThrow(/^use either max or --limit, not both$/);
+  });
+});
