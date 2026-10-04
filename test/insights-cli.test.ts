@@ -65,16 +65,17 @@ describe("native insight search client", () => {
     expect(fetchMock.mock.calls[0][0].toString()).toBe("https://memory.example/prefix/agentmemory/insights/search");
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: "POST", headers: { Authorization: "Bearer test-secret" },
-      body: JSON.stringify({ query: "checks", limit: 1 }),
+      body: JSON.stringify({ query: "checks", limit: 2 }),
     });
-    expect(result).toHaveLength(1);
-    expect(result[0]).not.toHaveProperty("sourceMemoryIds");
+    expect(result.insights).toHaveLength(1);
+    expect(result.insights[0]).not.toHaveProperty("sourceMemoryIds");
+    expect(result.truncated).toBe(true);
   });
 
   it("respects the port fallback and treats an explicit empty response as success", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ success: true, insights: [] }));
     vi.stubGlobal("fetch", fetchMock);
-    expect(await searchInsights(parseInsightArgs(["none"]), { III_REST_PORT: "3211" })).toEqual([]);
+    expect(await searchInsights(parseInsightArgs(["none"]), { III_REST_PORT: "3211" })).toEqual({ insights: [], truncated: false });
     expect(fetchMock.mock.calls[0][0].toString()).toBe("http://localhost:3211/agentmemory/insights/search");
   });
 
@@ -309,5 +310,54 @@ describe("insight CLI diagnostics", () => {
     expect(() => parseInsightArgs(["db", "101"], true)).toThrow(/^max must be a positive integer no greater than 100$/);
     expect(() => parseInsightArgs(["db", "5", "0"], true)).toThrow(/^pool must be a positive integer$/);
     expect(() => parseInsightArgs(["db", "3", "--limit=2"], true)).toThrow(/^use either max or --limit, not both$/);
+  });
+});
+
+describe("insight CLI agent-facing output", () => {
+  const records = (count: number) => Array.from({ length: count }, (_, index) => ({ ...insight, id: `ins_${index}` }));
+  const sentBody = (fetchMock: ReturnType<typeof vi.fn>, call: number) =>
+    JSON.parse((fetchMock.mock.calls[call][1] as RequestInit).body as string);
+
+  it("detects truncation by requesting one record past the limit", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ success: true, insights: records(3) }))
+      .mockResolvedValueOnce(Response.json({ success: true, insights: records(2) }))
+      .mockResolvedValueOnce(Response.json({ success: true, insights: records(101) }))
+      .mockResolvedValueOnce(Response.json({ success: true, insights: records(101) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const options = parseInsightArgs(["checks", "--limit=2"]);
+    // The extra record only signals that more insights match; it is never returned.
+    const more = await searchInsights(options, {});
+    expect(sentBody(fetchMock, 0)).toEqual({ query: "checks", limit: 3 });
+    expect(more.truncated).toBe(true);
+    expect(more.insights.map(({ id }) => id)).toEqual(["ins_0", "ins_1"]);
+    const exact = await searchInsights(options, {});
+    expect(exact.truncated).toBe(false);
+    expect(exact.insights).toHaveLength(2);
+    // At the cap the request asks for 101, never more.
+    const capped = await searchInsights(parseInsightArgs(["checks", "--limit", "100"]), {});
+    expect(sentBody(fetchMock, 2)).toEqual({ query: "checks", limit: 101 });
+    expect(capped.truncated).toBe(true);
+    expect(capped.insights).toHaveLength(100);
+    // A direct caller above the cap sends the same request and still gets at most 100 results.
+    const direct = await searchInsights({ ...options, limit: 1000 }, {});
+    expect(sentBody(fetchMock, 3)).toEqual({ query: "checks", limit: 101 });
+    expect(direct.truncated).toBe(true);
+    expect(direct.insights).toHaveLength(100);
+  });
+
+  it("passes timestamps through leniently", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(Response.json({ success: true, insights: [{ ...insight, createdAt: "2026-09-01T08:30:00.000Z" }] }))
+      .mockResolvedValueOnce(Response.json({ success: true, insights: [{ ...insight, createdAt: 5, lastReinforcedAt: "not a date" }] })));
+    const options = parseInsightArgs(["checks"]);
+    expect((await searchInsights(options, {})).insights).toEqual([{
+      id: "ins_1", title: "Boundary checks", content: "Validate incoming requests.",
+      confidence: 0.8, score: 0.7, tags: ["validation"],
+      createdAt: "2026-09-01T08:30:00.000Z", lastReinforcedAt: null,
+    }]);
+    // Timestamps only annotate results: a non-string becomes null instead of failing the search, and
+    // strings pass through as sent.
+    expect((await searchInsights(options, {})).insights[0]).toMatchObject({ createdAt: null, lastReinforcedAt: "not a date" });
   });
 });

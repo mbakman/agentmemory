@@ -14,6 +14,14 @@ export interface CompactInsight {
   confidence: number;
   score: number;
   tags: string[];
+  createdAt: string | null;
+  lastReinforcedAt: string | null;
+}
+
+export interface InsightSearchResult {
+  insights: CompactInsight[];
+  /** More insights matched than the limit allowed. */
+  truncated: boolean;
 }
 
 export const DEFAULT_INSIGHT_LIMIT = 10;
@@ -76,6 +84,32 @@ const LINE_BREAK = /[\n\u{2028}\u{2029}]/u;
  */
 function printableLine(text: string): string {
   return printable(text).replace(/\s+/g, (run) => (LINE_BREAK.test(run) ? " " : run)).trim();
+}
+
+/** A timestamp as a UTC YYYY-MM-DD date, or undefined when it is missing or does not parse. */
+function isoDate(timestamp: string | null): string | undefined {
+  const time = timestamp === null ? Number.NaN : Date.parse(timestamp);
+  if (Number.isNaN(time)) return undefined;
+  const date = new Date(time).toISOString().slice(0, 10);
+  // Years outside 0000-9999 serialize with a sign and six digits.
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
+}
+
+/** "[0.90; score 0.829; created 2026-09-01; reinforced 2026-09-30]", leaving out dates that do not parse. */
+function resultBracket(insight: CompactInsight): string {
+  const fields = [insight.confidence.toFixed(2), `score ${insight.score.toFixed(3)}`];
+  const created = isoDate(insight.createdAt);
+  if (created) fields.push(`created ${created}`);
+  const reinforced = isoDate(insight.lastReinforcedAt);
+  if (reinforced) fields.push(`reinforced ${reinforced}`);
+  return `[${fields.join("; ")}]`;
+}
+
+function truncationFooter(limit: number, compatibility: boolean): string {
+  if (limit >= MAX_INSIGHT_LIMIT) {
+    return `More insights match than the maximum of ${MAX_INSIGHT_LIMIT} results; use a more distinctive term.`;
+  }
+  return `More insights match. Raise ${compatibility ? "max" : "--limit"} (maximum ${MAX_INSIGHT_LIMIT}) or use a more distinctive term.`;
 }
 
 function configError(detail: string): Error {
@@ -199,6 +233,10 @@ function compactInsight(value: unknown, index: number): CompactInsight {
     confidence: confidence as number,
     score: score as number,
     tags: tags as string[],
+    // Timestamps only annotate results, so one that is not a string becomes null instead of failing
+    // the search.
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+    lastReinforcedAt: typeof value.lastReinforcedAt === "string" ? value.lastReinforcedAt : null,
   };
 }
 
@@ -264,12 +302,14 @@ function requestHeaders(env: NodeJS.ProcessEnv): Record<string, string> {
 export async function searchInsights(
   options: InsightSearchOptions,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<CompactInsight[]> {
+): Promise<InsightSearchResult> {
   const endpoint = resolveSearchEndpoint(env);
   const timeout = resolveTimeout(env);
   const headers = requestHeaders(env);
   // parseInsightArgs enforces the cap; this keeps direct callers within it too.
-  const body = JSON.stringify({ query: options.query, limit: Math.min(options.limit, MAX_INSIGHT_LIMIT) });
+  const limit = Math.min(options.limit, MAX_INSIGHT_LIMIT);
+  // One record past the limit reveals whether more insights match; it is never returned.
+  const body = JSON.stringify({ query: options.query, limit: limit + 1 });
   // Failures name the origin, never the path or the rest of the configured URL.
   const { origin } = endpoint;
   const timedOut = (error: unknown) => new Error(
@@ -313,7 +353,7 @@ export async function searchInsights(
     throw new Error("malformed response: expected success=true and an insights array");
   }
   // Slice before validating: records past the limit are never shown, so they cannot fail the search.
-  return data.insights.slice(0, options.limit).map(compactInsight);
+  return { insights: data.insights.slice(0, limit).map(compactInsight), truncated: data.insights.length > limit };
 }
 
 // A reader that stops early (`| head -n 1`) closes the pipe: EPIPE, or ECONNRESET on a Linux
@@ -388,16 +428,18 @@ export async function runInsightsCli(args: string[], compatibility = false): Pro
       await writeOutput(`${prefix}: note: ignoring one-character term(s) ${ignored.map(quote).join(", ")}; the server searches only terms of 2 or more characters\n`, true);
     }
     hydrateProcessEnvFromFile();
-    const insights = await searchInsights(options);
+    const { insights, truncated } = await searchInsights(options);
     if (options.json) {
-      await writeOutput(`${JSON.stringify({ success: true, query: options.query, limit: options.limit, insights })}\n`);
+      await writeOutput(`${JSON.stringify({ success: true, query: options.query, limit: options.limit, truncated, insights })}\n`);
     } else if (insights.length === 0) {
       await writeOutput(`No insights match ${quote(options.query)}.\n`);
     } else {
-      await writeOutput(`Showing ${insights.length} insight(s) for ${quote(options.query)} (limit ${options.limit}, ranked by relevance/confidence/recency).\n\n`);
+      const more = truncated ? "; more insights match" : "";
+      await writeOutput(`Showing ${insights.length} insight(s) for ${quote(options.query)} (limit ${options.limit}, ranked by relevance/confidence/recency${more}).\n\n`);
       for (const insight of insights) {
-        await writeOutput(`[${insight.confidence.toFixed(2)}; score ${insight.score.toFixed(3)}] ${printableLine(insight.title)}\n${printable(insight.content)}\n\n`);
+        await writeOutput(`${resultBracket(insight)} ${printableLine(insight.title)}\n${printable(insight.content)}\n\n`);
       }
+      if (truncated) await writeOutput(`${truncationFooter(options.limit, compatibility)}\n`);
     }
     return 0;
   } catch (error) {

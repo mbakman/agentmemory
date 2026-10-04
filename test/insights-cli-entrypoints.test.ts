@@ -94,7 +94,7 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout).insights).toHaveLength(10);
     expect(result.stdout).not.toContain("sourceMemoryIds");
-    expect(requests).toEqual([{ path: "/agentmemory/insights/search", body: { query: "example", limit: 10 }, auth: undefined }]);
+    expect(requests).toEqual([{ path: "/agentmemory/insights/search", body: { query: "example", limit: 11 }, auth: undefined }]);
   });
 
   it("limits output and passes bearer authentication", async () => {
@@ -333,6 +333,64 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     respond = (response) => response.end(JSON.stringify({ success: true, insights: [] }));
     expect((await run(compatibility, ["example\x7f"])).stdout).toBe('No insights match "example\\u007f".\n');
   });
+
+  it("signals when more insights match than the limit", async () => {
+    const lastBlock = (stdout: string) => stdout.split("\n\n").at(-1);
+    // The fixture holds 12 records, so the default limit of 10 leaves more.
+    const json = await run(compatibility, ["example", "--json"]);
+    expect(json).toMatchObject({ code: 0, stderr: "" });
+    const parsed = JSON.parse(json.stdout);
+    expect(Object.keys(parsed)).toEqual(["success", "query", "limit", "truncated", "insights"]);
+    expect(parsed).toMatchObject({ success: true, query: "example", limit: 10, truncated: true });
+    expect(parsed.insights).toHaveLength(10);
+    expect(requests[0].body).toEqual({ query: "example", limit: 11 });
+    const text = await run(compatibility, ["example"]);
+    expect(text).toMatchObject({ code: 0, stderr: "" });
+    expect(text.stdout).toMatch(/^Showing 10 insight\(s\) for "example" \(limit 10, ranked by relevance\/confidence\/recency; more insights match\)\.\n\n/);
+    expect(lastBlock(text.stdout)).toBe(compatibility
+      ? "More insights match. Raise max (maximum 100) or use a more distinctive term.\n"
+      : "More insights match. Raise --limit (maximum 100) or use a more distinctive term.\n");
+    // Exactly as many as the limit: nothing more to signal.
+    const three = compatibility ? ["example", "3"] : ["example", "--limit", "3"];
+    respond = (response) => response.end(JSON.stringify({ success: true, insights: insights.slice(0, 3) }));
+    const exact = await run(compatibility, three);
+    expect(exact).toMatchObject({ code: 0, stderr: "" });
+    expect(exact.stdout).toContain("(limit 3, ranked by relevance/confidence/recency).\n\n");
+    expect(exact.stdout).not.toMatch(/more insights match/i);
+    expect(lastBlock(exact.stdout)).toBe("");
+    expect(JSON.parse((await run(compatibility, [...three, "--json"])).stdout)).toMatchObject({ limit: 3, truncated: false });
+    // At the maximum there is no higher limit to suggest.
+    const many = Array.from({ length: 101 }, (_, index) => ({ ...insights[0], id: `ins_${index}` }));
+    respond = (response) => response.end(JSON.stringify({ success: true, insights: many }));
+    const capped = await run(compatibility, compatibility ? ["example", "100"] : ["example", "--limit", "100"]);
+    expect(capped).toMatchObject({ code: 0, stderr: "" });
+    expect(capped.stdout).toContain("(limit 100, ranked by relevance/confidence/recency; more insights match).\n\n");
+    expect(lastBlock(capped.stdout)).toBe("More insights match than the maximum of 100 results; use a more distinctive term.\n");
+    expect(requests.at(-1)!.body).toEqual({ query: "example", limit: 101 });
+  });
+
+  it("shows creation and reinforcement dates", async () => {
+    respond = (response) => response.end(JSON.stringify({ success: true, insights: [
+      { ...insights[0], createdAt: "2026-09-01T10:00:00.000Z", lastReinforcedAt: "2026-09-30T23:59:59.999Z" },
+      { ...insights[1], createdAt: "2026-08-15T00:00:00.000Z" },
+      { ...insights[2], createdAt: "not a date", lastReinforcedAt: 7 },
+    ] }));
+    const text = await run(compatibility, ["example"]);
+    expect(text).toMatchObject({ code: 0, stderr: "" });
+    expect(text.stdout).toContain("\n[0.90; score 1.000; created 2026-09-01; reinforced 2026-09-30] Insight 0\n");
+    // A missing timestamp, or one that does not parse, is left out rather than printed malformed.
+    expect(text.stdout).toContain("\n[0.90; score 0.990; created 2026-08-15] Insight 1\n");
+    expect(text.stdout).toContain("\n[0.90; score 0.980] Insight 2\n");
+    const json = await run(compatibility, ["example", "--json"]);
+    expect(json).toMatchObject({ code: 0, stderr: "" });
+    const parsed = JSON.parse(json.stdout);
+    expect(Object.keys(parsed.insights[0])).toEqual(["id", "title", "content", "confidence", "score", "tags", "createdAt", "lastReinforcedAt"]);
+    expect(parsed.insights.map(({ createdAt, lastReinforcedAt }: Record<string, unknown>) => ({ createdAt, lastReinforcedAt }))).toEqual([
+      { createdAt: "2026-09-01T10:00:00.000Z", lastReinforcedAt: "2026-09-30T23:59:59.999Z" },
+      { createdAt: "2026-08-15T00:00:00.000Z", lastReinforcedAt: null },
+      { createdAt: "not a date", lastReinforcedAt: null },
+    ]);
+  });
 });
 
 it("accepts and deprecates the obsolete pool argument without changing the request", async () => {
@@ -340,7 +398,7 @@ it("accepts and deprecates the obsolete pool argument without changing the reque
   expect(result.code).toBe(0);
   expect(result.stderr).toContain("pool argument is deprecated and ignored");
   expect(JSON.parse(result.stdout).insights).toHaveLength(2);
-  expect(requests[0].body).toEqual({ query: "example", limit: 2 });
+  expect(requests[0].body).toEqual({ query: "example", limit: 3 });
 });
 
 it("names the compatibility command in the deprecation notice", async () => {
