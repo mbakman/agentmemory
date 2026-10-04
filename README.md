@@ -507,8 +507,23 @@ agentmemory                    # start the server
 agentmemory stop               # tear it down
 agentmemory connect <agent>    # wire another agent
 agentmemory doctor             # interactive diagnostics + fix prompts
+agentmemory insights "database performance" --limit 5  # search synthesized insights
+agentmemory-insights "database performance" 5          # compatibility command
 agentmemory remove             # uninstall everything we created
 ```
+
+Insight search uses the existing server's title/content/tag matching and
+relevance/confidence/recency ranking, with ten results by default. Add `--json`
+for compact structured output; both formats omit source-memory ID lists. The
+compatibility command accepts an obsolete third pool argument but ignores it
+with a deprecation notice. Native search covers the full eligible corpus;
+the output reports returned results, not a total match count.
+
+Both commands honor `AGENTMEMORY_URL`, `III_REST_PORT`, `AGENTMEMORY_SECRET`, and
+`~/.agentmemory/.env`. Set `AGENTMEMORY_INSIGHTS_TIMEOUT_MS` to override the
+ten-second request timeout. Successful empty searches exit 0; connection,
+authentication, timeout, backend, and malformed-response errors go to stderr
+and exit 1. Invalid arguments exit 2. Neither command starts a daemon.
 
 ### Session Replay
 

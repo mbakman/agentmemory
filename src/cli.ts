@@ -62,6 +62,7 @@ import { hydrateProcessEnvFromFile } from "./config.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
+import { runInsightsCli } from "./cli/insights.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -69,6 +70,9 @@ import { resolveDataDir } from "./cli-data-dir.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
+if (args[0] === "insights") {
+  process.exit(await runInsightsCli(args.slice(1)));
+}
 const IS_WINDOWS = platform() === "win32";
 const IS_VERBOSE =
   args.includes("--verbose") ||
@@ -175,6 +179,7 @@ Commands:
                      No arg = interactive picker. --all wires every detected agent.
                      --dry-run shows what would change. --force re-installs.
   status             Show connection status, memory count, flags, and health
+  insights <query>   Search synthesized insights. --limit N (default 10), --json
   doctor             Interactive diagnostic + fixer. [F]ix · [S]kip · [?]more · [Q]uit
                      --all: apply every fix without prompting (CI)
                      --dry-run: show what each fix would do, don't execute
