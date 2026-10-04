@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const installed = process.env.AGENTMEMORY_TEST_INSTALLED === "1";
+// Resolved from this file, not the working directory, so the suite always runs this checkout's build.
+const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+const distEntries = { agentmemory: "cli", "agentmemory-insights": "insights-cli" } as const;
+type Binary = keyof typeof distEntries;
+type SpawnIo = { closeStdoutAfterFirstChunk?: boolean; closeStderr?: boolean };
 let baseUrl: string;
 let requests: Array<{ path: string; body: unknown; auth: string | undefined }>;
 let respond: (response: ServerResponse) => void;
@@ -17,6 +23,19 @@ const server = createServer(async (request, response) => {
   for await (const chunk of request) raw += chunk;
   requests.push({ path: request.url!, body: JSON.parse(raw), auth: request.headers.authorization });
   respond(response);
+});
+
+// Built mode spawns dist/, so a missing or stale build would quietly test old code. Fail fast instead.
+beforeAll(() => {
+  if (installed) return;
+  const [newest] = ["src/cli/insights.ts", "src/insights-cli.ts", "src/cli.ts"]
+    .map((source) => ({ path: repoFile(source), mtimeMs: statSync(repoFile(source)).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const entry of Object.values(distEntries)) {
+    const file = repoFile(`dist/${entry}.mjs`);
+    if (!existsSync(file)) throw new Error(`${file} is missing; run npm run build`);
+    if (statSync(file).mtimeMs < newest.mtimeMs) throw new Error(`${file} is older than ${newest.path}; run npm run build`);
+  }
 });
 
 beforeAll(async () => {
@@ -36,25 +55,36 @@ afterAll(async () => {
   await new Promise<void>((done) => server.close(() => done()));
 });
 
-function run(compatibility: boolean, args: string[], env: NodeJS.ProcessEnv = {}) {
-  const entry = compatibility ? "insights-cli" : "cli";
-  const binary = compatibility ? "agentmemory-insights" : "agentmemory";
-  const cliArgs = compatibility ? args : ["insights", ...args];
-  return new Promise<{ code: number | null; stdout: string; stderr: string }>((done, reject) => {
+function spawnCli(binary: Binary, args: string[], env: NodeJS.ProcessEnv = {}, io: SpawnIo = {}) {
+  // The timeout sends the default SIGTERM and never escalates: a child that survives it fails its test.
+  const options = { env: { ...process.env, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env }, timeout: 30_000 };
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((done, reject) => {
     const child = installed
-      ? spawn("/bin/zsh", ["-f", "-c", 'exec "$@"', "insights-test", binary, ...cliArgs], {
-        env: { ...process.env, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env },
-      })
-      : spawn(process.execPath, [resolve(`dist/${entry}.mjs`), ...cliArgs], {
-        env: { ...process.env, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env },
-      });
+      ? spawn("/bin/zsh", ["-f", "-c", 'exec "$@"', "insights-test", binary, ...args], options)
+      : spawn(process.execPath, [repoFile(`dist/${distEntries[binary]}.mjs`), ...args], options);
+    if (io.closeStderr) child.stderr.destroy();
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => stdout += chunk);
-    child.stderr.on("data", (chunk) => stderr += chunk);
+    // Decode as a stream so a multi-byte character split across pipe reads stays intact.
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+      if (io.closeStdoutAfterFirstChunk) child.stdout.destroy();
+    });
+    if (!io.closeStderr) child.stderr.setEncoding("utf8").on("data", (chunk: string) => stderr += chunk);
     child.on("error", reject);
-    child.on("close", (code) => done({ code, stdout, stderr }));
+    child.on("close", (code, signal) => done({ code, signal, stdout, stderr }));
   });
+}
+
+function run(compatibility: boolean, args: string[], env: NodeJS.ProcessEnv = {}, io: SpawnIo = {}) {
+  return compatibility
+    ? spawnCli("agentmemory-insights", args, env, io)
+    : spawnCli("agentmemory", ["insights", ...args], env, io);
+}
+
+// The native binary without the insights prefix, for top-level help and command dispatch.
+function runCli(args: string[]) {
+  return spawnCli("agentmemory", args);
 }
 
 describe.each([false, true])(`${installed ? "installed" : "built"} insight entrypoint compatibility=%s`, (compatibility) => {
