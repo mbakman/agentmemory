@@ -179,7 +179,8 @@ Commands:
                      No arg = interactive picker. --all wires every detected agent.
                      --dry-run shows what would change. --force re-installs.
   status             Show connection status, memory count, flags, and health
-  insights <query>   Search synthesized insights. --limit N (default 10), --json
+  insights <query>   Search synthesized insights on the running server.
+                     --limit N (1-100, default 10), --json. See: agentmemory insights --help
   doctor             Interactive diagnostic + fixer. [F]ix · [S]kip · [?]more · [Q]uit
                      --all: apply every fix without prompting (CI)
                      --dry-run: show what each fix would do, don't execute
@@ -215,7 +216,7 @@ Options:
 
 Environment:
   AGENTMEMORY_URL              Full REST base URL (e.g. http://localhost:3111).
-                               Honored by status, doctor, and MCP shim commands.
+                               Honored by status, doctor, insights, and MCP shim commands.
   AGENTMEMORY_DATA_DIR         State directory fallback when --data-dir is not set.
   AGENTMEMORY_USE_DOCKER=1     Prefer the bundled docker-compose path over the
                                native iii-engine binary on first run.
@@ -223,6 +224,8 @@ Environment:
   AGENTMEMORY_FOLLOWUP_WINDOW_SECONDS
                                Window (seconds) for the smart-search follow-up diagnostic
                                (default 30). Long values overcount, short values undercount.
+  AGENTMEMORY_INSIGHTS_TIMEOUT_MS
+                               Request timeout in ms for the insights command (default 10000).
 
 Quick start:
   npx @agentmemory/agentmemory          # start with local iii-engine or Docker
@@ -3188,7 +3191,7 @@ const commands: Record<string, () => Promise<void>> = {
 const first = args[0] ?? "";
 async function unknownCommand(): Promise<void> {
   p.log.error(
-    `Unknown command: ${first}. Supported: ${Object.keys(commands).join(", ")}. Run \`agentmemory\` with no arguments to start the memory server, or \`agentmemory --help\` for usage.`,
+    `Unknown command: ${first}. Supported: ${[...Object.keys(commands), "insights"].join(", ")}. Run \`agentmemory\` with no arguments to start the memory server, or \`agentmemory --help\` for usage.`,
   );
   process.exit(1);
 }

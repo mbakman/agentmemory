@@ -3,8 +3,15 @@ import { createServer, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const installed = process.env.AGENTMEMORY_TEST_INSTALLED === "1";
+// Agent docs probe for the subcommand with grep '^Usage: agentmemory insights', so this line is a contract.
+const probeLine = "Usage: agentmemory insights <query> [--limit N] [--json]";
+const shortUsage = `${probeLine}
+       agentmemory-insights <query> [max] [--json]
+Run with --help for matching rules, limits, configuration, and exit codes.
+`;
 // Resolved from this file, not the working directory, so the suite always runs this checkout's build.
 const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 const distEntries = { agentmemory: "cli", "agentmemory-insights": "insights-cli" } as const;
@@ -288,6 +295,15 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     expect(failed).toMatchObject({ code: 1, stdout: "", stderr: `${prefix}backend failure: HTTP 503\n` });
   });
 
+  it("follows a usage error with the short usage instead of the full help", async () => {
+    const result = await run(compatibility, ["example", "--limit=101"]);
+    expect(result).toMatchObject({
+      code: 2, stdout: "",
+      stderr: `${prefix}limit must be a positive integer no greater than 100\n${shortUsage}`,
+    });
+    expect(requests).toEqual([]);
+  });
+
   it("names the endpoint origin and error code on connection failures and timeouts", async () => {
     // A port that was just released refuses connections.
     const released = createServer();
@@ -410,5 +426,28 @@ it("hints at quoting an unquoted multi-word query in compatibility mode", async 
   const result = await run(true, ["database", "performance"]);
   expect(result.code).toBe(2);
   expect(result.stderr).toMatch(/^agentmemory-insights: max must be a positive integer no greater than 100 \(quote multi-word queries\)\n/);
+  expect(requests).toEqual([]);
+});
+
+it("starts the insights help with the probe line", async () => {
+  for (const compatibility of [false, true]) {
+    const result = await run(compatibility, ["--help"]);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(result.stdout.split("\n")[0]).toBe(probeLine);
+  }
+});
+
+it("documents the insights command and its environment in the top-level help", async () => {
+  const result = await runCli(["--help"]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("  insights <query>   Search synthesized insights on the running server.\n");
+  expect(result.stdout).toContain("AGENTMEMORY_INSIGHTS_TIMEOUT_MS");
+  expect(result.stdout).toContain("Honored by status, doctor, insights, and MCP shim commands.");
+});
+
+it("lists insights among the supported commands after an unknown command", async () => {
+  const result = await runCli(["insight"]);
+  expect(result.code).toBe(1);
+  expect(stripVTControlCharacters(result.stdout + result.stderr)).toMatch(/Supported:[^\n]*\binsights\b/);
   expect(requests).toEqual([]);
 });

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseInsightArgs, searchInsights, splitSearchTerms } from "../src/cli/insights.js";
+import {
+  INSIGHTS_HELP, INSIGHTS_USAGE, parseInsightArgs, searchInsights, splitSearchTerms,
+} from "../src/cli/insights.js";
 
 const insight = {
   id: "ins_1", title: "Boundary checks", content: "Validate incoming requests.",
@@ -359,5 +361,20 @@ describe("insight CLI agent-facing output", () => {
     // Timestamps only annotate results: a non-string becomes null instead of failing the search, and
     // strings pass through as sent.
     expect((await searchInsights(options, {})).insights[0]).toMatchObject({ createdAt: null, lastReinforcedAt: "not a date" });
+  });
+});
+
+describe("insight CLI help", () => {
+  it("keeps the probe line first and every line within 79 columns", () => {
+    // Agent docs probe for the subcommand with grep '^Usage: agentmemory insights'.
+    expect(INSIGHTS_HELP.split("\n")[0]).toBe("Usage: agentmemory insights <query> [--limit N] [--json]");
+    for (const text of [INSIGHTS_HELP, INSIGHTS_USAGE]) {
+      expect(text.split("\n").filter((line) => line.length > 79)).toEqual([]);
+    }
+  });
+
+  it("gives usage errors the help's usage lines and a pointer to --help", () => {
+    const usageLines = INSIGHTS_HELP.split("\n").slice(0, 2).join("\n");
+    expect(INSIGHTS_USAGE).toBe(`${usageLines}\nRun with --help for matching rules, limits, configuration, and exit codes.\n`);
   });
 });

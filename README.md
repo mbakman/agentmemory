@@ -507,23 +507,18 @@ agentmemory                    # start the server
 agentmemory stop               # tear it down
 agentmemory connect <agent>    # wire another agent
 agentmemory doctor             # interactive diagnostics + fix prompts
-agentmemory insights "database performance" --limit 5  # search synthesized insights
-agentmemory-insights "database performance" 5          # compatibility command
+agentmemory insights postgres --limit 5  # search synthesized insights
+agentmemory-insights postgres 5          # compatibility command
 agentmemory remove             # uninstall everything we created
 ```
 
-Insight search uses the existing server's title/content/tag matching and
-relevance/confidence/recency ranking, with ten results by default. Add `--json`
-for compact structured output; both formats omit source-memory ID lists. The
-compatibility command accepts an obsolete third pool argument but ignores it
-with a deprecation notice. Native search covers the full eligible corpus;
-the output reports returned results, not a total match count.
+Both insight commands send one search request to the agentmemory server that is already running; neither starts a server. `insights` must be the first argument of `agentmemory`: with a flag in front, as in `agentmemory --verbose insights postgres`, the command line is treated as a server start instead of a search.
 
-Both commands honor `AGENTMEMORY_URL`, `III_REST_PORT`, `AGENTMEMORY_SECRET`, and
-`~/.agentmemory/.env`. Set `AGENTMEMORY_INSIGHTS_TIMEOUT_MS` to override the
-ten-second request timeout. Successful empty searches exit 0; connection,
-authentication, timeout, backend, and malformed-response errors go to stderr
-and exit 1. Invalid arguments exit 2. Neither command starts a daemon.
+The server lowercases the query, splits it on whitespace into terms, and ignores one-character terms, so the commands reject a query with no term of two or more characters (exit status 2). Each term is a case-insensitive substring match against an insight's title, content, and tags, and an insight that matches any term is returned, so `"database performance"` also returns insights that mention only one of the two words. Quotes keep words together for the shell but do not make a phrase. Results rank by confidence, the share of terms matched, and recency, and insights below 0.1 confidence are never returned. One distinctive term of four or more characters, such as `postgres`, gives the most focused results.
+
+`--limit` takes 1 to 100 and defaults to 10; `agentmemory-insights` also takes the number as its positional `max`. When more insights match than the limit, text output says so in its header and footer, and JSON output sets `"truncated": true`. `--json` prints one compact object with `success`, `query`, `limit`, `truncated`, and `insights`; each insight carries its id, title, content, confidence, score, tags, and creation and last-reinforcement timestamps. Neither format includes source-memory ID lists. `agentmemory-insights` accepts an obsolete third pool argument but ignores it with a deprecation notice.
+
+Both commands honor `AGENTMEMORY_URL` (an http or https base URL, optionally with a path prefix), `III_REST_PORT` (used when `AGENTMEMORY_URL` is unset), `AGENTMEMORY_SECRET`, and `~/.agentmemory/.env`. `AGENTMEMORY_INSIGHTS_TIMEOUT_MS` sets the total request timeout in milliseconds, from 1 to 2147483647 (default 10000). Exit status 0 covers printed results, no match, and a reader that closed the output early (for example `| head -n 1`). Exit status 1 is a configuration, connection, timeout, authentication, backend, malformed-response, or output failure, described on stderr. Exit status 2 is invalid usage, such as `--limit 101`.
 
 ### Session Replay
 

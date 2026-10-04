@@ -31,16 +31,57 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const SEARCH_PATH = "/agentmemory/insights/search";
 
-export const INSIGHTS_HELP = `Usage: agentmemory insights <query> [--limit N] [--json]
-       agentmemory-insights <query> [max] [--json]
+// Agent docs probe for the subcommand with grep '^Usage: agentmemory insights', so the first line
+// must not change.
+const USAGE_LINES = `Usage: agentmemory insights <query> [--limit N] [--json]
+       agentmemory-insights <query> [max] [--json]`;
 
-Search synthesized insights by title, content, and tags using the server's
-relevance/confidence/recency ranking. Defaults to ten results.
-The obsolete third positional pool argument is accepted but ignored.
+/** Follows a usage error in place of the full help. */
+export const INSIGHTS_USAGE = `${USAGE_LINES}
+Run with --help for matching rules, limits, configuration, and exit codes.
+`;
 
-Configuration: AGENTMEMORY_URL, III_REST_PORT, AGENTMEMORY_SECRET,
-and ~/.agentmemory/.env. AGENTMEMORY_INSIGHTS_TIMEOUT_MS defaults to 10000.
-Exit status: 0 for results or an empty search; 1 for failures; 2 for invalid usage.
+export const INSIGHTS_HELP = `${USAGE_LINES}
+
+Search the synthesized insights stored by a running agentmemory server. The
+command only sends one search request; it never starts the server.
+
+How the server matches a query:
+  - It lowercases the query and splits it on whitespace into terms. Quotes
+    only keep words together for the shell; they do not make a phrase.
+  - It ignores one-character terms. A query with no term of two or more
+    characters is rejected with exit status 2.
+  - Each term is a case-insensitive substring match against an insight's
+    title, content, and tags. An insight matching any term is returned;
+    matching more of the terms ranks it higher.
+  - Insights below 0.1 confidence are never returned.
+  - One distinctive term of four or more characters gives the most focused
+    results.
+
+Ranking: confidence x share of terms matched x recency.
+When more insights match than the limit, text output says so and JSON sets
+"truncated": true.
+
+Options:
+  --limit N    Number of results, 1 to 100 (default 10). For
+               agentmemory-insights, pass N as the positional max instead.
+  --json       Print compact JSON instead of text.
+  --help, -h   Show this help.
+  --           Stop option parsing, so a query may start with "-".
+agentmemory-insights accepts and ignores an obsolete third pool argument.
+
+Configuration: AGENTMEMORY_URL (http or https base URL, optionally with a
+path prefix), III_REST_PORT (used when AGENTMEMORY_URL is unset; default
+3111), AGENTMEMORY_SECRET, and AGENTMEMORY_INSIGHTS_TIMEOUT_MS (total
+request timeout in milliseconds, 1 to 2147483647, default 10000). Values
+may also come from ~/.agentmemory/.env.
+
+Exit status:
+  0  results printed, no insight matched, or the reader closed the output
+     early (for example, piping into head)
+  1  configuration, connection, timeout, authentication, backend,
+     malformed-response, or output failure (details on stderr)
+  2  invalid usage
 `;
 
 /** JSON string quoting that also escapes DEL and C1 controls, which JSON.stringify leaves raw. */
@@ -417,7 +458,7 @@ export async function runInsightsCli(args: string[], compatibility = false): Pro
     try {
       options = parseInsightArgs(args, compatibility);
     } catch (error) {
-      await writeOutput(`${prefix}: ${(error as Error).message}\n${INSIGHTS_HELP}`, true);
+      await writeOutput(`${prefix}: ${(error as Error).message}\n${INSIGHTS_USAGE}`, true);
       return 2;
     }
     if (options.deprecatedPool) {
