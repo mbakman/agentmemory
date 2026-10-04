@@ -225,6 +225,26 @@ describe("insight search endpoint and response handling", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it("asks fetch to return redirects instead of following them", async () => {
+    const fetchMock = emptySearch();
+    vi.stubGlobal("fetch", fetchMock);
+    await searchInsights(parseInsightArgs(["checks"]), {});
+    expect((fetchMock.mock.calls[0][1] as RequestInit).redirect).toBe("manual");
+  });
+
+  it.each([301, 307, 308])("fails on an unfollowed HTTP %i redirect and cancels its body", async (status) => {
+    const cancel = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new ReadableStream({ pull() {}, cancel }), {
+      status, headers: { Location: "http://elsewhere.example/agentmemory/insights/search" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await failure(searchInsights(parseInsightArgs(["checks"]), {}))).toBe(
+      `backend failure: HTTP ${status} redirect not followed; set AGENTMEMORY_URL to the agentmemory server's own address`,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("names the malformed record and ignores records past the limit", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(Response.json({ success: true, insights: [insight, { ...insight, id: "ins_bad", score: "bad", tags: [1] }] }))

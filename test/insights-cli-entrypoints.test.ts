@@ -331,6 +331,30 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     });
   });
 
+  // Following the redirect would re-send the query, and on the same origin the Authorization header, to
+  // a path AGENTMEMORY_URL never named, in a second request that would even succeed here.
+  it.each(["", "fixture-secret"])("never follows a redirect (AGENTMEMORY_SECRET=%j)", async (secret) => {
+    const target = "/redirected/agentmemory/insights/search";
+    respond = (response) => {
+      if (requests.at(-1)!.path === target) {
+        response.end(JSON.stringify({ success: true, insights }));
+      } else {
+        response.writeHead(307, { Location: `${baseUrl}${target}` });
+        response.end("redirecting");
+      }
+    };
+    const result = await run(compatibility, ["example"], { AGENTMEMORY_SECRET: secret });
+    // Exactly one request, to the configured path: no request, and so no Authorization header, reaches the target.
+    expect(requests).toEqual([{
+      path: "/agentmemory/insights/search", body: { query: "example", limit: 11 },
+      auth: secret ? `Bearer ${secret}` : undefined,
+    }]);
+    expect(result).toMatchObject({
+      code: 1, stdout: "",
+      stderr: `${prefix}backend failure: HTTP 307 redirect not followed; set AGENTMEMORY_URL to the agentmemory server's own address\n`,
+    });
+  });
+
   // ESC passes new Headers() and would otherwise fail only when fetch sends the request.
   it.each(["a\nb", "😀", "a\x1bb"])("rejects the unsendable AGENTMEMORY_SECRET %j without echoing it", async (secret) => {
     const result = await run(compatibility, ["example"], { AGENTMEMORY_SECRET: secret });

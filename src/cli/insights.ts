@@ -376,7 +376,9 @@ export async function searchInsights(
   const signal = AbortSignal.timeout(timeout);
   let response: Response;
   try {
-    response = await fetch(endpoint, { method: "POST", headers, body, signal });
+    // "manual" returns a redirect as the response. Following it would send the query, and on the same
+    // origin the Authorization header, to an address that was never validated, in a second request.
+    response = await fetch(endpoint, { method: "POST", headers, body, signal, redirect: "manual" });
   } catch (error) {
     if (signal.aborted) throw timedOut(error);
     throw new Error(`connection failed: could not reach ${origin}${codeSuffix(error)}; check AGENTMEMORY_URL and that the agentmemory daemon is running`);
@@ -387,6 +389,9 @@ export async function searchInsights(
     await response.body?.cancel().catch(() => undefined);
     if (response.status === 401 || response.status === 403) {
       throw new Error(`authentication failed (HTTP ${response.status}): set AGENTMEMORY_SECRET to match the server`);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error(`backend failure: HTTP ${response.status} redirect not followed; set AGENTMEMORY_URL to the agentmemory server's own address`);
     }
     throw new Error(`backend failure: HTTP ${response.status}`);
   }
