@@ -18,6 +18,7 @@ const distEntries = { agentmemory: "cli", "agentmemory-insights": "insights-cli"
 type Binary = keyof typeof distEntries;
 type SpawnIo = { closeStdoutAfterFirstChunk?: boolean; closeStderr?: boolean };
 let baseUrl: string;
+let spawned = 0;
 let requests: Array<{ path: string; body: unknown; auth: string | undefined }>;
 let respond: (response: ServerResponse) => void;
 const insights = Array.from({ length: 12 }, (_, index) => ({
@@ -65,6 +66,7 @@ afterAll(async () => {
 function spawnCli(binary: Binary, args: string[], env: NodeJS.ProcessEnv = {}, io: SpawnIo = {}) {
   // The timeout sends the default SIGTERM and never escalates: a child that survives it fails its test.
   const options = { env: { ...process.env, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env }, timeout: 30_000 };
+  spawned++;
   return new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((done, reject) => {
     const child = installed
       ? spawn("/bin/zsh", ["-f", "-c", 'exec "$@"', "insights-test", binary, ...args], options)
@@ -89,8 +91,13 @@ function run(compatibility: boolean, args: string[], env: NodeJS.ProcessEnv = {}
     : spawnCli("agentmemory", ["insights", ...args], env, io);
 }
 
-// The native binary without the insights prefix, for top-level help and command dispatch.
-function runCli(args: string[]) {
+// The native binary without the insights prefix, for top-level help and command dispatch. An empty or
+// flag-first argv other than help reaches the server boot path, so it is refused before anything spawns.
+async function runCli(args: string[]) {
+  const [first] = args;
+  if (first === undefined || (first.startsWith("-") && first !== "--help" && first !== "-h")) {
+    throw new Error(`runCli refuses ${JSON.stringify(args)}: an empty or flag-first argv would start the server`);
+  }
   return spawnCli("agentmemory", args);
 }
 
@@ -324,11 +331,12 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     });
   });
 
-  it.each(["a\nb", "😀"])("rejects the unsendable AGENTMEMORY_SECRET %j without echoing it", async (secret) => {
+  // ESC passes new Headers() and would otherwise fail only when fetch sends the request.
+  it.each(["a\nb", "😀", "a\x1bb"])("rejects the unsendable AGENTMEMORY_SECRET %j without echoing it", async (secret) => {
     const result = await run(compatibility, ["example"], { AGENTMEMORY_SECRET: secret });
     expect(result).toMatchObject({
       code: 1, stdout: "",
-      stderr: `${prefix}configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF\n`,
+      stderr: `${prefix}configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove control characters and characters above U+00FF\n`,
     });
     expect(result.stderr).not.toContain(secret);
     expect(requests).toEqual([]);
@@ -407,6 +415,31 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
       { createdAt: "not a date", lastReinforcedAt: null },
     ]);
   });
+
+  it("prints a date only for a plain ISO-8601 date or a date-time with a zone", async () => {
+    // Date.parse reads the last three as local time or by engine-specific rules, so they are left out.
+    const createdAt = [
+      "2026-09-01T10:00:00.000Z", "2026-09-01", "2026-09-01T23:30:00-05:00",
+      "2026-09-01T10:00:00", "Sep 1 2026", "1",
+    ];
+    respond = (response) => response.end(JSON.stringify({
+      success: true, insights: createdAt.map((value, index) => ({ ...insights[index], createdAt: value })),
+    }));
+    const text = await run(compatibility, ["example"]);
+    expect(text).toMatchObject({ code: 0, stderr: "" });
+    expect(text.stdout.split("\n").filter((line) => line.startsWith("["))).toEqual([
+      "[0.90; score 1.000; created 2026-09-01] Insight 0",
+      "[0.90; score 0.990; created 2026-09-01] Insight 1",
+      "[0.90; score 0.980; created 2026-09-02] Insight 2",
+      "[0.90; score 0.970] Insight 3",
+      "[0.90; score 0.960] Insight 4",
+      "[0.90; score 0.950] Insight 5",
+    ]);
+    // JSON passes every timestamp through as sent.
+    const json = await run(compatibility, ["example", "--json"]);
+    expect(json).toMatchObject({ code: 0, stderr: "" });
+    expect(JSON.parse(json.stdout).insights.map((item: { createdAt: unknown }) => item.createdAt)).toEqual(createdAt);
+  });
 });
 
 it("accepts and deprecates the obsolete pool argument without changing the request", async () => {
@@ -441,6 +474,7 @@ it("documents the insights command and its environment in the top-level help", a
   const result = await runCli(["--help"]);
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("  insights <query>   Search synthesized insights on the running server.\n");
+  expect(result.stdout).toContain("--limit N (1-100, default 10), --json. See: agentmemory insights --help");
   expect(result.stdout).toContain("AGENTMEMORY_INSIGHTS_TIMEOUT_MS");
   expect(result.stdout).toContain("Honored by status, doctor, insights, and MCP shim commands.");
 });
@@ -450,4 +484,12 @@ it("lists insights among the supported commands after an unknown command", async
   expect(result.code).toBe(1);
   expect(stripVTControlCharacters(result.stdout + result.stderr)).toMatch(/Supported:[^\n]*\binsights\b/);
   expect(requests).toEqual([]);
+});
+
+it("refuses an argv that would start the server without spawning anything", async () => {
+  const before = spawned;
+  for (const args of [[], ["--verbose", "insights", "x"]]) {
+    await expect(runCli(args)).rejects.toThrow(/^runCli refuses .*would start the server$/);
+  }
+  expect(spawned).toBe(before);
 });

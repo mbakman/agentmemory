@@ -63,8 +63,8 @@ When more insights match than the limit, text output says so and JSON sets
 "truncated": true.
 
 Options:
-  --limit N    Number of results, 1 to 100 (default 10). For
-               agentmemory-insights, pass N as the positional max instead.
+  --limit N    Number of results, 1 to 100 (default 10).
+               agentmemory-insights also accepts N as a positional max.
   --json       Print compact JSON instead of text.
   --help, -h   Show this help.
   --           Stop option parsing, so a query may start with "-".
@@ -127,16 +127,22 @@ function printableLine(text: string): string {
   return printable(text).replace(/\s+/g, (run) => (LINE_BREAK.test(run) ? " " : run)).trim();
 }
 
-/** A timestamp as a UTC YYYY-MM-DD date, or undefined when it is missing or does not parse. */
+// A plain ISO-8601 date, or a date-time with an explicit zone. Date.parse reads other forms (a
+// date-time without a zone, "Sep 1 2026", "1") as local time or by engine-specific rules, so the date
+// printed would depend on the machine.
+const ZONED_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
+/** A timestamp as a UTC YYYY-MM-DD date, or undefined when it is missing, in another form, or does not parse. */
 function isoDate(timestamp: string | null): string | undefined {
-  const time = timestamp === null ? Number.NaN : Date.parse(timestamp);
+  if (timestamp === null || !ZONED_ISO_TIMESTAMP.test(timestamp)) return undefined;
+  const time = Date.parse(timestamp);
   if (Number.isNaN(time)) return undefined;
   const date = new Date(time).toISOString().slice(0, 10);
   // Years outside 0000-9999 serialize with a sign and six digits.
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
 }
 
-/** "[0.90; score 0.829; created 2026-09-01; reinforced 2026-09-30]", leaving out dates that do not parse. */
+/** "[0.90; score 0.829; created 2026-09-01; reinforced 2026-09-30]", leaving out dates isoDate rejects. */
 function resultBracket(insight: CompactInsight): string {
   const fields = [insight.confidence.toFixed(2), `score ${insight.score.toFixed(3)}`];
   const created = isoDate(insight.createdAt);
@@ -171,14 +177,15 @@ function positiveInteger(value: string, label: string, max?: number): number {
 }
 
 /**
- * The compatibility form's max and pool. A word in their place is usually the rest of an unquoted
- * multi-word query, so its error says so.
+ * The compatibility form's max and pool. Anything but a plain decimal number in their place is usually
+ * the rest of an unquoted multi-word query, so its error says so.
  */
 function compatNumber(value: string, label: string, max?: number): number {
   try {
     return positiveInteger(value, label, max);
   } catch (error) {
-    if (!Number.isNaN(Number(value))) throw error;
+    // Not Number(value): it also reads "0x1f", "1e3" and "Infinity" as numbers.
+    if (/^[+-]?\d+(\.\d+)?$/.test(value)) throw error;
     throw new Error(`${(error as Error).message} (quote multi-word queries)`);
   }
 }
@@ -326,16 +333,25 @@ function resolveTimeout(env: NodeJS.ProcessEnv): number {
   }
 }
 
+// Anything but tab, printable ASCII and U+0080-U+00FF: C0 controls other than tab, DEL, and code points
+// above U+00FF. new Headers() accepts ESC, DEL and most other controls, but fetch then fails while
+// sending the request, which would read as a connection failure.
+const UNSENDABLE_HEADER_CHARACTER = /[^\t\x20-\x7e\x80-\xff]/;
+const UNSENDABLE_SECRET = "AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove control characters and characters above U+00FF";
+
 /** Plain-object headers for fetch, checked up front so an unsendable secret is a configuration error. */
 function requestHeaders(env: NodeJS.ProcessEnv): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (!env.AGENTMEMORY_SECRET) return headers;
-  headers.Authorization = `Bearer ${env.AGENTMEMORY_SECRET}`;
+  const secret = env.AGENTMEMORY_SECRET;
+  if (!secret) return headers;
+  if (UNSENDABLE_HEADER_CHARACTER.test(secret)) throw configError(UNSENDABLE_SECRET);
+  headers.Authorization = `Bearer ${secret}`;
+  // A second line of defense. The TypeError's message quotes the header value, secret included, so it
+  // is neither shown nor chained.
   try {
     new Headers(headers);
   } catch {
-    // The TypeError's message quotes the header value, secret included, so it is neither shown nor chained.
-    throw configError("AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF");
+    throw configError(UNSENDABLE_SECRET);
   }
   return headers;
 }

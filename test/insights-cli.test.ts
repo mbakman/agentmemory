@@ -278,25 +278,29 @@ describe("insight CLI diagnostics", () => {
     );
   });
 
-  it.each(["a\nb", "😀", "fixture-secret\nsecond-line"])(
-    "maps the unsendable AGENTMEMORY_SECRET %j to a configuration error that never echoes it", async (secret) => {
-      const fetchMock = emptySearch();
-      vi.stubGlobal("fetch", fetchMock);
-      const message = await failure(searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: secret }));
-      expect(message).toBe(
-        "configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove line breaks, NUL characters, and characters above U+00FF",
-      );
-      expect(message).not.toContain(secret);
-      expect(message).not.toContain("Bearer");
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-  it("still sends a secret that fetch can send", async () => {
+  // ESC, DEL and U+0001 pass new Headers() and only fail once fetch sends the request.
+  it.each([
+    ["ESC", "fixture\x1bsecret"], ["DEL", "fixture\x7fsecret"], ["U+0001", "fixture\x01secret"],
+    ["LF", "fixture\nsecret"], ["NUL", "fixture\0secret"], ["an emoji", "fixture😀secret"],
+    ["U+0100", "fixture\u{100}secret"], ["a trailing LF", "fixture-secret\n"],
+  ])("maps an AGENTMEMORY_SECRET containing %s to a configuration error that never echoes it", async (_name, secret) => {
     const fetchMock = emptySearch();
     vi.stubGlobal("fetch", fetchMock);
-    // fetch trims surrounding whitespace from header values, so a trailing newline is sendable.
-    await searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: "test-secret\n" });
+    const message = await failure(searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: secret }));
+    expect(message).toBe(
+      "configuration error: AGENTMEMORY_SECRET cannot be sent in an HTTP Authorization header; remove control characters and characters above U+00FF",
+    );
+    expect(message).not.toContain(secret);
+    expect(message).not.toContain("Bearer");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still sends a secret with a tab in the middle", async () => {
+    const fetchMock = emptySearch();
+    vi.stubGlobal("fetch", fetchMock);
+    await searchInsights(parseInsightArgs(["checks"]), { AGENTMEMORY_SECRET: "a\tb" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer a\tb" });
   });
 
   it("hints at quoting when a compatibility max or pool is a word", () => {
@@ -312,6 +316,22 @@ describe("insight CLI diagnostics", () => {
     expect(() => parseInsightArgs(["db", "101"], true)).toThrow(/^max must be a positive integer no greater than 100$/);
     expect(() => parseInsightArgs(["db", "5", "0"], true)).toThrow(/^pool must be a positive integer$/);
     expect(() => parseInsightArgs(["db", "3", "--limit=2"], true)).toThrow(/^use either max or --limit, not both$/);
+  });
+
+  // "--" lets a max that starts with "-" through option parsing.
+  it.each(["0x1f", "1e3", "Infinity", "-Infinity", "five"])(
+    "hints at quoting when the compatibility max %j is not a plain decimal number", (max) => {
+      expect(() => parseInsightArgs(["--", "db", max], true))
+        .toThrow(/^max must be a positive integer no greater than 100 \(quote multi-word queries\)$/);
+    });
+
+  it.each(["0", "101", "2.5", "-3"])("gives the plain decimal compatibility max %j no quoting hint", (max) => {
+    expect(() => parseInsightArgs(["--", "db", max], true)).toThrow(/^max must be a positive integer no greater than 100$/);
+  });
+
+  it("hints at quoting when the compatibility pool is not a plain decimal number", () => {
+    expect(() => parseInsightArgs(["db", "5", "0x1f"], true))
+      .toThrow(/^pool must be a positive integer \(quote multi-word queries\)$/);
   });
 });
 
@@ -376,5 +396,21 @@ describe("insight CLI help", () => {
   it("gives usage errors the help's usage lines and a pointer to --help", () => {
     const usageLines = INSIGHTS_HELP.split("\n").slice(0, 2).join("\n");
     expect(INSIGHTS_USAGE).toBe(`${usageLines}\nRun with --help for matching rules, limits, configuration, and exit codes.\n`);
+  });
+
+  it("documents matching, the limit, truncation, the timeout range and exit status", () => {
+    for (const text of [
+      "How the server matches a query:",
+      "  --limit N    Number of results, 1 to 100 (default 10).\n" +
+        "               agentmemory-insights also accepts N as a positional max.\n",
+      'When more insights match than the limit, text output says so and JSON sets\n"truncated": true.',
+      "1 to 2147483647",
+      "\nExit status:\n",
+      "\n  0  results printed",
+      "\n  1  configuration, connection, timeout, authentication, backend,\n",
+      "\n  2  invalid usage\n",
+    ]) {
+      expect(INSIGHTS_HELP).toContain(text);
+    }
   });
 });
