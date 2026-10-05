@@ -12,6 +12,31 @@ import type {
 } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { REFLECT_SYSTEM, buildReflectPrompt } from "../prompts/reflect.js";
+import { readSnapshot } from "./graph.js";
+import { logger } from "../logger.js";
+import { getEnvVar } from "../config.js";
+
+const MAX_CONCEPTS_PER_CLUSTER = 15;
+const MAX_CLUSTER_FACTS = 10;
+const MAX_CLUSTER_LESSONS = 10;
+const MAX_CLUSTER_CRYSTALS = 5;
+const MAX_JACCARD_SEEDS = 300;
+const MAX_JACCARD_SEED_DF_RATIO = 0.25;
+const REFLECT_RECENT_CLUSTERS_KEY = "reflect:recentClusters";
+const REFLECT_CLUSTER_COOLDOWN_DEFAULT_MS = 604800000;
+
+function getReflectClusterCooldownMs(): number {
+  const raw = getEnvVar("AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS");
+  const n = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n) || n < 0) return REFLECT_CLUSTER_COOLDOWN_DEFAULT_MS;
+  return n;
+}
+
+function clusterSeedKey(conceptNames: string[]): string {
+  return [...new Set(conceptNames.map((c) => String(c).toLowerCase()))]
+    .sort()
+    .join("|");
+}
 
 interface ConceptCluster {
   concepts: string[];
@@ -66,10 +91,11 @@ function buildGraphClusters(
 
   const visited = new Set<string>();
   const clusters: string[][] = [];
-  const conceptNodeIds = new Set(conceptNodes.map((n) => n.id));
+  const nodeById = new Map(conceptNodes.map((n) => [n.id, n]));
 
   for (const seed of sorted) {
-    if (visited.has(seed.id) || clusters.length >= maxClusters) break;
+    if (clusters.length >= maxClusters) break;
+    if (visited.has(seed.id)) continue;
 
     const cluster: string[] = [];
     const queue = [seed.id];
@@ -77,15 +103,17 @@ function buildGraphClusters(
     let depth = 0;
 
     while (queue.length > 0 && depth <= 2) {
+      if (cluster.length >= MAX_CONCEPTS_PER_CLUSTER) break;
       const levelCount = queue.length;
       for (let i = 0; i < levelCount; i++) {
+        if (cluster.length >= MAX_CONCEPTS_PER_CLUSTER) break;
         const current = queue.shift()!;
         if (seen.has(current)) continue;
         seen.add(current);
 
-        if (conceptNodeIds.has(current)) {
-          const node = conceptNodes.find((n) => n.id === current);
-          if (node) cluster.push(node.name);
+        const node = nodeById.get(current);
+        if (node) {
+          cluster.push(node.name);
           visited.add(current);
         }
 
@@ -125,22 +153,31 @@ function buildJaccardClusters(
     }
   }
 
-  const conceptList = [...allConcepts.keys()].filter(
-    (k) => (allConcepts.get(k)?.size || 0) >= 2,
+  const totalDocs = semanticMemories.length + lessons.length;
+  const maxDf = Math.max(2, Math.floor(totalDocs * MAX_JACCARD_SEED_DF_RATIO));
+  const conceptList = [...allConcepts.keys()].filter((k) => {
+    const size = allConcepts.get(k)?.size || 0;
+    return size >= 2 && size <= maxDf;
+  });
+  conceptList.sort(
+    (a, b) => (allConcepts.get(b)?.size || 0) - (allConcepts.get(a)?.size || 0),
   );
+  const seeds = conceptList.slice(0, MAX_JACCARD_SEEDS);
 
   const visited = new Set<string>();
   const clusters: string[][] = [];
 
-  for (const concept of conceptList) {
-    if (visited.has(concept) || clusters.length >= maxClusters) break;
+  for (const concept of seeds) {
+    if (clusters.length >= maxClusters) break;
+    if (visited.has(concept)) continue;
 
     const cluster = [concept];
     visited.add(concept);
 
     const docsA = allConcepts.get(concept) || new Set();
-    for (const other of conceptList) {
-      if (visited.has(other)) continue;
+    for (const other of seeds) {
+      if (cluster.length >= MAX_CONCEPTS_PER_CLUSTER) break;
+      if (visited.has(other) || concept === other) continue;
       const docsB = allConcepts.get(other) || new Set();
       let intersection = 0;
       for (const d of docsA) {
@@ -171,14 +208,15 @@ export function registerReflectFunctions(
       const maxInsightsPerCluster = 5;
       const maxTotal = 50;
 
-      const [graphNodes, graphEdges, semanticMemories, lessons, crystals] =
+      const [snapshot, semanticMemories, lessons, crystals] =
         await Promise.all([
-          kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-          kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
+          readSnapshot(kv),
           kv.list<SemanticMemory>(KV.semantic).catch(() => []),
           kv.list<Lesson>(KV.lessons).catch(() => []),
           kv.list<Crystal>(KV.crystals).catch(() => []),
         ]);
+      const graphNodes = snapshot?.topNodes ?? [];
+      const graphEdges = snapshot?.topEdges ?? [];
 
       let activeLessons = lessons.filter((l) => !l.deleted);
       if (data?.project) {
@@ -200,6 +238,28 @@ export function registerReflectFunctions(
         );
       }
 
+      const cooldownMs = getReflectClusterCooldownMs();
+      let recentClusters: Record<string, unknown> = {};
+      let recentDirty = false;
+      let clustersCooledDown = 0;
+      if (cooldownMs > 0) {
+        const stored = await kv.get<Record<string, unknown>>(
+          KV.config,
+          REFLECT_RECENT_CLUSTERS_KEY,
+        ).catch(() => null);
+        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+          recentClusters = { ...stored };
+        }
+        const cutoff = Date.now() - cooldownMs;
+        for (const [key, value] of Object.entries(recentClusters)) {
+          const timestamp = Date.parse(String(value));
+          if (!Number.isFinite(timestamp) || timestamp < cutoff) {
+            delete recentClusters[key];
+            recentDirty = true;
+          }
+        }
+      }
+
       let newInsights = 0;
       let reinforced = 0;
       let clustersSkipped = 0;
@@ -213,14 +273,16 @@ export function registerReflectFunctions(
         const clusterFacts = semanticMemories.filter((s) => {
           const factTerms = s.fact.toLowerCase().split(/\s+/);
           return factTerms.some((t) => conceptSet.has(t));
-        });
+        }).sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+          .slice(0, MAX_CLUSTER_FACTS);
 
         const clusterLessons = activeLessons.filter((l) =>
           l.tags.some((t) => conceptSet.has(t.toLowerCase())) ||
           conceptNames.some((c) =>
             l.content.toLowerCase().includes(c.toLowerCase()),
           ),
-        );
+        ).sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+          .slice(0, MAX_CLUSTER_LESSONS);
 
         const clusterCrystals = crystals.filter((c) =>
           (c.lessons || []).some((l) =>
@@ -228,12 +290,19 @@ export function registerReflectFunctions(
               l.toLowerCase().includes(cn.toLowerCase()),
             ),
           ),
-        );
+        ).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+          .slice(0, MAX_CLUSTER_CRYSTALS);
 
         const totalItems =
           clusterFacts.length + clusterLessons.length + clusterCrystals.length;
         if (totalItems < 3) {
           clustersSkipped++;
+          continue;
+        }
+
+        const seedKey = clusterSeedKey(conceptNames);
+        if (cooldownMs > 0 && recentClusters[seedKey]) {
+          clustersCooledDown++;
           continue;
         }
 
@@ -256,6 +325,10 @@ export function registerReflectFunctions(
         try {
           const prompt = buildReflectPrompt(cluster);
           const response = await provider.summarize(REFLECT_SYSTEM, prompt);
+          if (cooldownMs > 0) {
+            recentClusters[seedKey] = new Date().toISOString();
+            recentDirty = true;
+          }
 
           const insightRegex =
             /<insight\s+confidence="([^"]+)"\s+title="([^"]+)">([\s\S]*?)<\/insight>/g;
@@ -308,17 +381,28 @@ export function registerReflectFunctions(
             clusterCount++;
             totalInsights++;
           }
-        } catch {
-          continue;
+        } catch (err) {
+          logger.warn("reflect: cluster synthesis failed", {
+            concepts: conceptNames.slice(0, 6),
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
+      }
+
+      if (cooldownMs > 0 && recentDirty) {
+        await kv.set(KV.config, REFLECT_RECENT_CLUSTERS_KEY, recentClusters)
+          .catch((err) => logger.warn("reflect: failed to persist recent clusters", {
+            error: err instanceof Error ? err.message : String(err),
+          }));
       }
 
       try {
         await recordAudit(kv, "reflect", "mem::reflect", [], {
           newInsights,
           reinforced,
-          clustersProcessed: conceptClusters.length - clustersSkipped,
+          clustersProcessed: conceptClusters.length - clustersSkipped - clustersCooledDown,
           clustersSkipped,
+          clustersCooledDown,
           usedFallback,
         });
       } catch {}
@@ -327,8 +411,9 @@ export function registerReflectFunctions(
         success: true,
         newInsights,
         reinforced,
-        clustersProcessed: conceptClusters.length - clustersSkipped,
+        clustersProcessed: conceptClusters.length - clustersSkipped - clustersCooledDown,
         clustersSkipped,
+        clustersCooledDown,
         usedFallback,
       };
     },

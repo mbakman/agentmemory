@@ -1550,6 +1550,8 @@ Create `~/.agentmemory/.env`:
                                    # during graph extraction. Faster runs;
                                    # relation quality can drop slightly.
 # CONSOLIDATION_ENABLED=false   # on by default when an LLM provider is configured
+# AGENTMEMORY_REFLECT_PROMPT_CHARS=12000
+# AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS=604800000
 # LESSON_DECAY_ENABLED=true
 # OBSIDIAN_AUTO_EXPORT=false
 # AGENTMEMORY_EXPORT_ROOT=~/.agentmemory
@@ -1564,6 +1566,14 @@ Create `~/.agentmemory/.env`:
 # Tool visibility: "all" (54 tools, default) or "core" (8 tools, lean)
 # AGENTMEMORY_TOOLS=core
 ```
+
+Insight synthesis (`mem::reflect`, the reflect consolidation tier) uses the existing graph snapshot and falls back to Jaccard clustering. Each cluster contains at most 15 concepts and selects up to ten facts, ten active lessons, and five work summaries. Session-stop graph extraction runs only when `GRAPH_EXTRACTION_ENABLED=true`; direct graph extraction keeps its existing behavior.
+
+`AGENTMEMORY_REFLECT_PROMPT_CHARS` sets the synthesis prompt budget in JavaScript characters (default 12000). Invalid or nonpositive values use the default; positive values below 2000 use 2000. Each memory item is limited to 800 characters plus an ellipsis. The builder includes complete lines and preserves the concept header, which can exceed the budget. These settings control insight synthesis; `AGENTMEMORY_REFLECT` controls the separate slot-reflection feature.
+
+`AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS` sets the cooldown for repeated concept clusters (default 604800000 milliseconds, or seven days). Invalid or negative values use the default; zero disables cooldown reads and writes. The cooldown key is shared across projects. Synthesis marks a cluster after the provider returns, even if the response yields no valid insight. Provider failures do not mark a cluster. Reflect results and audit records include `clustersCooledDown`; forcing consolidation does not bypass this cooldown.
+
+The worker invocation timeout and both bundled HTTP configuration templates use 600000 milliseconds to allow sequential cluster synthesis. Reinstall the built fork package to retain these source fixes.
 
 ---
 

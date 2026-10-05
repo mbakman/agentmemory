@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
 import type { GraphNode, GraphEdge } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
+import { logger } from "../src/logger.js";
+
+vi.mock("../src/logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 function mockKV(
   nodes: GraphNode[] = [],
@@ -294,5 +300,225 @@ describe("GraphRetrieval", () => {
     const results = await retrieval.searchByEntities(["Start"], 2);
     expect(results.find((r) => r.obsId === "obs_3")).toBeDefined();
     expect(results.find((r) => r.obsId === "obs_4")).toBeUndefined();
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+describe.each(["searchByEntities", "expandFromChunks"] as const)(
+  "GraphRetrieval.%s enumeration",
+  (method) => {
+    const nodes = [
+      makeNode("n1", "Anchor", "concept", ["obs_root"]),
+      makeNode("n2", "Neighbor", "concept", ["obs_neighbor"]),
+    ];
+    const edges = [makeEdge("e1", "n1", "n2")];
+    const retrieve = (retrieval: GraphRetrieval, maxResults = 20) =>
+      method === "searchByEntities"
+        ? retrieval.searchByEntities(["Anchor"], 2, maxResults)
+        : retrieval.expandFromChunks(["obs_root"], 2, maxResults);
+
+    beforeEach(() => {
+      vi.mocked(logger.warn).mockClear();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("starts both state reads before either one resolves", async () => {
+      const nodeRead = deferred<GraphNode[]>();
+      const edgeRead = deferred<GraphEdge[]>();
+      const kv = {
+        list: vi.fn((scope: string) =>
+          scope === KV.graphNodes ? nodeRead.promise : edgeRead.promise,
+        ),
+      };
+      let settled = false;
+      const result = retrieve(new GraphRetrieval(kv as never)).then((value) => {
+        settled = true;
+        return value;
+      });
+
+      expect(kv.list.mock.calls).toEqual([[KV.graphNodes], [KV.graphEdges]]);
+      expect(settled).toBe(false);
+      nodeRead.resolve(nodes);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      edgeRead.resolve(edges);
+
+      expect((await result).map((item) => item.obsId)).toContain("obs_neighbor");
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it.each([KV.graphNodes, KV.graphEdges])(
+      "returns an empty stream when %s rejects",
+      async (failedScope) => {
+        const failure = new Error(`read failed: ${failedScope}`);
+        const kv = {
+          list: vi.fn(async (scope: string) => {
+            if (scope === failedScope) throw failure;
+            return scope === KV.graphNodes ? nodes : edges;
+          }),
+        };
+
+        await expect(retrieve(new GraphRetrieval(kv as never))).resolves.toEqual([]);
+        expect(kv.list.mock.calls).toEqual([[KV.graphNodes], [KV.graphEdges]]);
+        expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+          "graph retrieval enumeration failed, skipping graph stream",
+          { error: failure.message },
+        );
+      },
+    );
+
+    it("reports non-Error failures without rejecting the graph stream", async () => {
+      const kv = { list: vi.fn(async () => { throw "state unavailable"; }) };
+
+      await expect(retrieve(new GraphRetrieval(kv as never))).resolves.toEqual([]);
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        "graph retrieval enumeration failed, skipping graph stream",
+        { error: "state unavailable" },
+      );
+    });
+
+    it("returns at six seconds and leaves late state reads uncancelled", async () => {
+      vi.useFakeTimers();
+      const nodeRead = deferred<GraphNode[]>();
+      const edgeRead = deferred<GraphEdge[]>();
+      const nodeSettled = vi.fn();
+      const edgeSettled = vi.fn();
+      nodeRead.promise.then(nodeSettled);
+      edgeRead.promise.then(edgeSettled);
+      const kv = {
+        list: vi.fn((scope: string) =>
+          scope === KV.graphNodes ? nodeRead.promise : edgeRead.promise,
+        ),
+      };
+      let settled = false;
+      const result = retrieve(new GraphRetrieval(kv as never)).then((value) => {
+        settled = true;
+        return value;
+      });
+
+      await vi.advanceTimersByTimeAsync(5999);
+      expect(settled).toBe(false);
+      expect(logger.warn).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(await result).toEqual([]);
+      expect(nodeSettled).not.toHaveBeenCalled();
+      expect(edgeSettled).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        "graph retrieval enumeration failed, skipping graph stream",
+        { error: "graph-retrieval enumeration: exceeded 6000ms budget" },
+      );
+
+      nodeRead.resolve(nodes);
+      edgeRead.resolve(edges);
+      await Promise.all([nodeRead.promise, edgeRead.promise]);
+
+      expect(nodeSettled).toHaveBeenCalledWith(nodes);
+      expect(edgeSettled).toHaveBeenCalledWith(edges);
+      expect(await result).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("uses results received before the deadline and clears its timer", async () => {
+      vi.useFakeTimers();
+      const nodeRead = deferred<GraphNode[]>();
+      const edgeRead = deferred<GraphEdge[]>();
+      const kv = {
+        list: vi.fn((scope: string) =>
+          scope === KV.graphNodes ? nodeRead.promise : edgeRead.promise,
+        ),
+      };
+      const result = retrieve(new GraphRetrieval(kv as never));
+
+      await vi.advanceTimersByTimeAsync(5999);
+      nodeRead.resolve(nodes);
+      edgeRead.resolve(edges);
+
+      expect((await result).map((item) => item.obsId)).toContain("obs_neighbor");
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("filters stale nodes and edges while preserving scores and output limits", async () => {
+      const staleNode = {
+        ...makeNode("n3", "Anchor-old", "concept", ["obs_stale_node"]),
+        stale: true,
+      };
+      const blockedNode = makeNode("n4", "Blocked", "concept", ["obs_stale_edge"]);
+      const staleEdge = { ...makeEdge("e3", "n1", "n4"), stale: true };
+      const kv = mockKV(
+        [...nodes, staleNode, blockedNode],
+        [...edges, makeEdge("e2", "n1", "n3"), staleEdge],
+      );
+      const retrieval = new GraphRetrieval(kv as never);
+
+      const results = await retrieve(retrieval);
+      expect(results.map((item) => item.obsId)).toEqual(
+        method === "searchByEntities"
+          ? ["obs_root", "obs_neighbor"]
+          : ["obs_neighbor"],
+      );
+      expect(results[0].score).toBe(method === "searchByEntities" ? 1 : 1 / 6);
+      expect(await retrieve(retrieval, 1)).toEqual(results.slice(0, 1));
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("returns empty for an empty graph without warning", async () => {
+      await expect(retrieve(new GraphRetrieval(mockKV() as never))).resolves.toEqual([]);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("GraphRetrieval.temporalQuery", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("preserves state failures instead of converting them to an empty stream", async () => {
+    const kv = { list: vi.fn(async () => { throw new Error("temporal read failed"); }) };
+
+    await expect(new GraphRetrieval(kv as never).temporalQuery("Anchor"))
+      .rejects.toThrow("temporal read failed");
+  });
+
+  it("retains sequential state reads without the graph-stream timeout", async () => {
+    vi.useFakeTimers();
+    const nodeRead = deferred<GraphNode[]>();
+    const edgeRead = deferred<GraphEdge[]>();
+    const kv = {
+      list: vi.fn((scope: string) =>
+        scope === KV.graphNodes ? nodeRead.promise : edgeRead.promise,
+      ),
+    };
+    let settled = false;
+    const result = new GraphRetrieval(kv as never).temporalQuery("Anchor").then((value) => {
+      settled = true;
+      return value;
+    });
+
+    expect(kv.list.mock.calls).toEqual([[KV.graphNodes]]);
+    await vi.advanceTimersByTimeAsync(6001);
+    expect(settled).toBe(false);
+    nodeRead.resolve([makeNode("n1", "Anchor")]);
+    await Promise.resolve();
+    expect(kv.list.mock.calls).toEqual([[KV.graphNodes], [KV.graphEdges]]);
+    edgeRead.resolve([]);
+
+    expect((await result).entity?.name).toBe("Anchor");
   });
 });

@@ -39,9 +39,9 @@ const SNAPSHOT_KEY = "current";
 // and falls back to the snapshot (or a warning envelope) when the live
 // path is too slow. 6000ms leaves headroom under the default 8s engine
 // invocation deadline.
-const LIVE_ENUMERATION_BUDGET_MS = 6000;
+export const LIVE_ENUMERATION_BUDGET_MS = 6000;
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(
       () => reject(new Error(`${label}: exceeded ${ms}ms budget`)),
@@ -77,7 +77,7 @@ function emptySnapshot(): GraphSnapshot {
   };
 }
 
-async function readSnapshot(kv: StateKV): Promise<GraphSnapshot | null> {
+export async function readSnapshot(kv: StateKV): Promise<GraphSnapshot | null> {
   try {
     const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, SNAPSHOT_KEY);
     if (snap && typeof snap === "object" && snap.version === 1) {

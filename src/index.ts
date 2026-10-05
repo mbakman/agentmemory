@@ -201,7 +201,7 @@ async function main() {
 
   const sdk = registerWorker(config.engineUrl, {
     workerName: "agentmemory",
-    invocationTimeoutMs: 180000,
+    invocationTimeoutMs: 600000,
     otel: {
       serviceName: OTEL_CONFIG.serviceName,
       serviceVersion: OTEL_CONFIG.serviceVersion,
