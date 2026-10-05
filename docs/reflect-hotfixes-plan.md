@@ -1,6 +1,6 @@
 # Persist the reflect hotfixes
 
-Status: source implementation and deployment verified on 2026-10-05. Both Fable reviews marked the final plan and implementation READY. Commit and push are the final steps.
+Status: complete on 2026-10-05. Source implementation, tests, clean npm installations, and live deployment are verified. Both Fable reviews returned READY. Source commit `ff0c2f8f237caee41fc4872d937f83d87dd59e89` is pushed to `origin/fix/reflect-hotfixes`.
 
 ## Intent and goal
 
@@ -198,7 +198,8 @@ The implementation evidence must show that no manual bundle patches are required
 - Both insight entrypoints ran in `zsh -f -c` behind the required help probe and returned `ins_140c66d4d16bc568` with limit 1 and `truncated: true`.
 - `memory_consolidate({"tier":"reflect"})` returned `success: true`, with nested `clustersCooledDown: 4`, `clustersProcessed: 0`, `clustersSkipped: 0`, `newInsights: 0`, `reinforced: 0`, and `usedFallback: true`. The log records the same counters and contains no reflect-tier, cluster-synthesis, or cooldown-persistence failure. Existing cooldown records correctly suppress repeated synthesis; new synthesis behavior is covered by the focused tests.
 - Durable evidence files: `global-install.log`, `global-entrypoints.log`, `processes-before.txt`, `processes-after.txt`, `livez-before.json`, `livez-after.json`, `insights-before.json`, `insights-after.jsonl`, `recall-after.json`, `reflect-result.json`, `reflect-validation.log`, and the three stale-store manifests.
-- Remaining: commit and push. Implementation and deployment checks are complete. Existing TypeScript errors remain at the baseline of 30; the integration test excluded by `npm test` was not run.
+- Source and tests committed as `ff0c2f8f237caee41fc4872d937f83d87dd59e89` and pushed to `https://github.com/mbakman/agentmemory`, branch `fix/reflect-hotfixes`. Author and committer are Baha Akman <bakman@nvidia.com>; no co-author trailer was added.
+- No implementation or deployment step remains. A branch merge or pull request is outside this plan. Existing TypeScript errors remain at the baseline of 30; the integration test excluded by `npm test` was not run.
 
 ## Rollback procedure
 
