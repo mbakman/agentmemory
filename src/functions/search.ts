@@ -37,14 +37,25 @@ export function setHybridRanker(fn: HybridRanker | null): void {
   hybridRanker = fn
 }
 
-// Dedupes the lazy cold-start rebuild kicked off from the mem::search
-// request path. A full rebuildIndex walks every observation across every
-// session, so N concurrent queries against an empty index would each
-// launch their own rebuild and saturate the engine invocation pool. The
-// first query with an empty index starts one rebuild and shares its
-// promise; concurrent queries await the same rebuild instead of spawning
-// duplicates. The boot-time rebuild in index.ts is unaffected.
-let rebuildPromise: Promise<number> | null = null
+type KeywordRebuild = {
+  promise: Promise<KeywordRebuildResult>
+  resolve: (result: KeywordRebuildResult) => void
+  reject: (error: unknown) => void
+  running: boolean
+}
+let keywordRebuild: KeywordRebuild | null = null
+
+function reserveKeywordRebuild(): KeywordRebuild {
+  if (keywordRebuild) return keywordRebuild
+  let resolve!: KeywordRebuild['resolve']
+  let reject!: KeywordRebuild['reject']
+  const promise = new Promise<KeywordRebuildResult>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  keywordRebuild = { promise, resolve, reject, running: false }
+  return keywordRebuild
+}
 
 let memoryIndexReady = false
 export function isMemoryIndexReady(): boolean {
@@ -64,6 +75,7 @@ export function getKeywordRebuildEpoch(): number {
 }
 export function markKeywordRebuildPending(): void {
   keywordRebuildPending = true
+  reserveKeywordRebuild()
 }
 export function isKeywordRebuildInProgress(): boolean {
   return keywordRebuildPending || keywordRebuildsRunning > 0
@@ -524,18 +536,31 @@ async function listSessionsWithRetry(kv: StateKV): Promise<Session[] | null> {
 
 type KeywordRebuildResult = { documents: number; vectorJobs: VectorBackfillJob[]; fullBackfillPending: number }
 
-export async function rebuildKeywordIndex(
+export function rebuildKeywordIndex(
   kv: StateKV,
   vectorBackfillSince?: string | null,
 ): Promise<KeywordRebuildResult> {
+  const rebuild = reserveKeywordRebuild()
+  if (rebuild.running) return rebuild.promise
+  rebuild.running = true
   keywordRebuildsRunning++
-  try {
-    return await runKeywordRebuild(kv, vectorBackfillSince)
-  } finally {
+  const finish = () => {
+    keywordRebuild = null
     keywordRebuildsRunning--
     keywordRebuildPending = false
     keywordRebuildEpoch++
   }
+  void runKeywordRebuild(kv, vectorBackfillSince).then(
+    (result) => {
+      finish()
+      rebuild.resolve(result)
+    },
+    (error) => {
+      finish()
+      rebuild.reject(error)
+    },
+  )
+  return rebuild.promise
 }
 
 async function runKeywordRebuild(
@@ -749,26 +774,15 @@ export function registerSearchFunction(sdk: IIIClient, kv: StateKV): void {
         tokenBudget = data.token_budget
       }
 
-      if (idx.size === 0) {
-        // Share one rebuild across concurrent cold-start queries so they
-        // don't each walk the whole corpus and saturate the pool.
-        if (!rebuildPromise) {
-          rebuildPromise = rebuildKeywordIndex(kv)
-            .then((result) => {
-              logger.info('Search index rebuilt', { entries: result.documents })
-              return result.documents
-            })
-            .catch((err) => {
-              logger.warn('Index rebuild failed', {
-                error: err instanceof Error ? err.message : String(err),
-              })
-              return 0
-            })
-            .finally(() => {
-              rebuildPromise = null
-            })
+      if (keywordRebuild || idx.size === 0) {
+        try {
+          const result = await (keywordRebuild?.promise ?? rebuildKeywordIndex(kv))
+          logger.info('Search index rebuilt', { entries: result.documents })
+        } catch (err) {
+          logger.warn('Index rebuild failed', {
+            error: err instanceof Error ? err.message : String(err),
+          })
         }
-        await rebuildPromise
       }
 
       // When filtering by project/cwd, over-fetch from the index so the

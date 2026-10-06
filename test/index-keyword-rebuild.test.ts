@@ -1,16 +1,25 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
+
+vi.mock("../src/logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 import {
   backfillVectors,
   getPendingVectorBackfillCount,
   getSearchIndex,
   isBm25RebuildIncomplete,
   isMemoryIndexReady,
+  isKeywordRebuildInProgress,
+  markKeywordRebuildPending,
   rebuildKeywordIndex,
+  registerSearchFunction,
   setEmbeddingProvider,
   setIndexPersistence,
   setVectorIndex,
 } from "../src/functions/search.js";
 import { VectorIndex } from "../src/state/vector-index.js";
+import { KV } from "../src/state/schema.js";
 import type { CompressedObservation, EmbeddingProvider, Memory, Session } from "../src/types.js";
 
 function mockKV() {
@@ -113,12 +122,126 @@ function stubProvider(): EmbeddingProvider {
   } as EmbeddingProvider;
 }
 
+function barrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((onResolve) => { resolve = onResolve; });
+  return { promise, resolve };
+}
+
+function holdSessionListing(kv: ReturnType<typeof mockKV>) {
+  const entered = barrier();
+  const release = barrier();
+  const list = vi.fn(async <T>(scope: string): Promise<T[]> => {
+    if (scope === KV.sessions) {
+      entered.resolve();
+      await release.promise;
+    }
+    return kv.list<T>(scope);
+  });
+  return { ...kv, list, entered, release };
+}
+
+function registerRecall(kv: ReturnType<typeof mockKV>) {
+  type Handler = (data: { query: string; format: string }) => Promise<{ results: Array<{ obsId: string }> }>;
+  let handler!: Handler;
+  registerSearchFunction({
+    registerFunction: (_id: string, fn: Handler) => { handler = fn; },
+  } as never, kv as never);
+  return () => handler({ query: "auth", format: "compact" });
+}
+
 describe("rebuildKeywordIndex", () => {
   afterEach(() => {
     getSearchIndex().clear();
     setVectorIndex(null);
     setEmbeddingProvider(null);
     setIndexPersistence(null);
+  });
+
+  it("holds early recall requests for the reserved boot rebuild without starting another scan", async () => {
+    const kv = mockKV();
+    seed(kv, 1, 3, () => "2026-09-01T00:00:00.000Z");
+    const held = holdSessionListing(kv);
+    const recall = registerRecall(held);
+    getSearchIndex().clear();
+    markKeywordRebuildPending();
+    let settled = 0;
+    const requests = Array.from({ length: 3 }, () => recall().then((result) => { settled++; return result; }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const callsBeforeBoot = held.list.mock.calls.length;
+    const boot = rebuildKeywordIndex(held as never);
+    await held.entered.promise;
+
+    try {
+      expect(callsBeforeBoot).toBe(0);
+      expect(settled).toBe(0);
+      expect(isKeywordRebuildInProgress()).toBe(true);
+      expect(getSearchIndex().size).toBe(1);
+    } finally {
+      held.release.resolve();
+      await boot;
+      await Promise.all(requests);
+    }
+
+    for (const result of await Promise.all(requests)) {
+      expect(result.results.map((entry) => entry.obsId)).toContain("obs_0");
+    }
+    expect(held.list.mock.calls.map(([scope]) => scope)).toEqual([
+      KV.memories, KV.sessions, KV.observations("ses_0"),
+    ]);
+    expect(isKeywordRebuildInProgress()).toBe(false);
+  });
+
+  it("holds recall while a boot rebuild has a partly populated index", async () => {
+    const kv = mockKV();
+    seed(kv, 1, 3, () => "2026-09-01T00:00:00.000Z");
+    const held = holdSessionListing(kv);
+    const recall = registerRecall(held);
+    const boot = rebuildKeywordIndex(held as never);
+    await held.entered.promise;
+    let settled = 0;
+    const requests = Array.from({ length: 3 }, () => recall().then((result) => { settled++; return result; }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    try {
+      expect(getSearchIndex().size).toBe(1);
+      expect(settled).toBe(0);
+      expect(held.list.mock.calls.map(([scope]) => scope)).toEqual([KV.memories, KV.sessions]);
+    } finally {
+      held.release.resolve();
+      await boot;
+      await Promise.all(requests);
+    }
+
+    for (const result of await Promise.all(requests)) {
+      expect(result.results.map((entry) => entry.obsId)).toContain("obs_0");
+    }
+    expect(getSearchIndex().size).toBe(4);
+    expect(held.list.mock.calls.map(([scope]) => scope)).toEqual([
+      KV.memories, KV.sessions, KV.observations("ses_0"),
+    ]);
+  });
+
+  it("shares overlapping rebuilds while retaining the boot vector cutoff", async () => {
+    const kv = mockKV();
+    seed(kv, 2, 5, (i) => (i < 5 ? "2026-09-01T00:00:00.000Z" : "2026-09-20T00:00:00.000Z"));
+    const held = holdSessionListing(kv);
+    setVectorIndex(new VectorIndex());
+    setEmbeddingProvider(stubProvider());
+    const boot = rebuildKeywordIndex(held as never, "2026-09-10T00:00:00.000Z");
+    await held.entered.promise;
+    const overlapping = rebuildKeywordIndex(held as never);
+
+    try {
+      expect(overlapping).toBe(boot);
+    } finally {
+      held.release.resolve();
+    }
+    const result = await boot;
+    expect(result.vectorJobs.map((job) => job.id).sort()).toEqual(["obs_5", "obs_6", "obs_7", "obs_8", "obs_9"]);
+    expect(held.list.mock.calls.map(([scope]) => scope)).toEqual([
+      KV.memories, KV.sessions, KV.observations("ses_0"), KV.observations("ses_1"),
+    ]);
   });
 
   it("rebuilds BM25 from stored observations and latest memories, quickly", async () => {

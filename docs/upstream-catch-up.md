@@ -32,6 +32,8 @@ Upstream now creates a local API secret when no explicit secret is set. Both ins
 
 Two preserved reflect tests read the legacy audit scope. Upstream now stores new audit entries in monthly scopes. The tests now check `mem:audit:2026-10`; reflect behavior did not change.
 
+The source review found a startup search race. An early recall could start a second keyword rebuild, or search a partly built index. The worker now reserves one shared rebuild promise before it registers `mem::search`. Boot starts that rebuild after it loads the vector snapshot and selects the vector cutoff. Early recall requests await the shared promise. Overlapping rebuild calls reuse that promise and retain the first call's vector cutoff. The change uses APIs available in Node.js 20.
+
 ## Verification on 2026-10-06
 
 | Command | Observed result |
@@ -64,6 +66,22 @@ Build, suite, skill, installed-command, package, and dependency-tree evidence re
 
 `npm audit` reports 11 dependency findings: nine moderate and two high. The high findings affect transitive OpenTelemetry packages. Its proposed automatic repair changes helpers to `0.24.4`, beyond the required `0.22.1` pin. No automatic dependency repair was applied.
 
+## Startup search correction
+
+The corrected package is `startup-rebuild-fix/agentmemory-agentmemory-0.9.29.tgz` in the private package directory. Its SHA-256 is `ba4df8ace65915e102cd016d04973d3bb063d8a48dfe640f5fcee3a279704d53`. Earlier packages remain as evidence; they do not contain this correction.
+
+The focused command `npm exec -- vitest run test/index-keyword-rebuild.test.ts test/status-rebuild-overlap.test.ts test/search.test.ts` passed all 18 tests. Three new regressions exercise concurrent recall before the boot scan, recall during a partly populated index, and overlapping rebuild calls with a vector cutoff. Each test verifies one corpus scan and the returned records or vector jobs.
+
+After the correction, `npm run build` passed. `npm test` passed 2,863 tests in 239 files, with two tests skipped. `npm run skills:check` passed all 17 skills. The package contains 285 files and both CLI entrypoints. The package was installed into another private prefix with scripts disabled. `AGENTMEMORY_TEST_INSTALLED=1 npm exec -- vitest run test/insights-cli-entrypoints.test.ts` passed all 93 tests through non-interactive shells. Evidence for this correction is in `packages/startup-rebuild-fix/`.
+
 ## Release gate
 
 These checks validate the integrated source and package. The verification lane must still compare migration results, prove rollback, and obtain Fable acceptance. No production cutover, global upgrade, main merge, or push occurs as part of this source integration step.
+
+The source review gates remain explicit:
+
+- Rollback must restore the original store and runtime together. The upgrade migrates legacy index files; a binary change alone cannot restore them.
+- Any future production launch must set `AGENTMEMORY_DATA_DIR` to `/Users/bakman/.agentmemory/data`. Engine storage, audit migration, and capture spool must use the same directory.
+- Before cutover, test the actual MCP registry shim against the isolated runtime with authentication enabled. In-repository client tests do not prove that external shim's behavior.
+
+The startup search race is corrected in this package. These other gates still require measured runtime evidence and advisor acceptance.
