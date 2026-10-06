@@ -128,9 +128,12 @@ function barrier() {
   return { promise, resolve };
 }
 
+const releaseSessionListings: Array<() => void> = [];
+
 function holdSessionListing(kv: ReturnType<typeof mockKV>) {
   const entered = barrier();
   const release = barrier();
+  releaseSessionListings.push(release.resolve);
   const list = vi.fn(async <T>(scope: string): Promise<T[]> => {
     if (scope === KV.sessions) {
       entered.resolve();
@@ -151,11 +154,43 @@ function registerRecall(kv: ReturnType<typeof mockKV>) {
 }
 
 describe("rebuildKeywordIndex", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    for (const release of releaseSessionListings.splice(0)) release();
+    if (isKeywordRebuildInProgress()) {
+      await rebuildKeywordIndex(mockKV() as never).catch(() => {});
+    }
+    vi.restoreAllMocks();
     getSearchIndex().clear();
     setVectorIndex(null);
     setEmbeddingProvider(null);
     setIndexPersistence(null);
+  });
+
+  it("releases held recall after a rebuild rejection and permits a fresh scan", async () => {
+    const kv = mockKV();
+    seed(kv, 1, 3, () => "2026-09-01T00:00:00.000Z");
+    const list = vi.spyOn(kv, "list");
+    const recall = registerRecall(kv);
+    const idx = getSearchIndex();
+    idx.clear();
+    const failure = new Error("keyword clear failed once");
+    const clear = vi.spyOn(idx, "clear").mockImplementationOnce(() => { throw failure; });
+    markKeywordRebuildPending();
+    const heldRecall = recall();
+    const rejected = await rebuildKeywordIndex(kv as never).catch((error) => error);
+
+    expect(rejected).toBe(failure);
+    expect((await heldRecall).results).toEqual([]);
+    expect(isKeywordRebuildInProgress()).toBe(false);
+
+    const retried = await recall();
+    expect(retried.results.map((entry) => entry.obsId)).toContain("obs_0");
+    expect(list.mock.calls.map(([scope]) => scope)).toEqual([
+      KV.memories, KV.sessions, KV.observations("ses_0"),
+    ]);
+    expect(clear).toHaveBeenCalledTimes(2);
+    expect(isKeywordRebuildInProgress()).toBe(false);
+    expect(idx.size).toBe(4);
   });
 
   it("holds early recall requests for the reserved boot rebuild without starting another scan", async () => {
