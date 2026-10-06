@@ -73,3 +73,29 @@ Final source and validation assembly: `ecc94ffe079a5c1311bcfc639a204018b8b79dc0`
 Fable `claude-fable-5-1`, native 1M context, effort `max`, accepted the isolated rehearsal as READY with no remaining blocker. No Ultracode consultation occurred. The readiness report records the proof limits and separate cutover requirements. Production closure checks passed known recall, both installed insight names, and viewer access. The original worker and engine identities remain. Health still reports the existing memory-pressure alert. All test runtimes exited gracefully. No forced termination, cleanup deletion, global upgrade, main merge, or push occurred.
 
 The closing physical archive scan matched the sealed manifest: all 18,737 files, zero content or metadata differences. The original seal manifest SHA-256 remains `cc26147271de6a8bc1695505ad3e299e90dc4a72b5f04c95ae15c850c10b5d05`. Evidence is `evidence/archive-untouched-final.json`. The sealed archive remains unchanged.
+
+## Production cutover planning — 2026-10-06
+
+The user authorized preparation of the separate production cutover plan. Execution remains outside this planning request.
+The plan is [production-cutover.md](production-cutover.md). Only `mbakman/agentmemory` is a publication destination.
+The original backup and rehearsal remain complete. No production process, package, or consumer setting changed during this phase.
+
+- [x] Recheck production identities, listeners, versions, package and lock hashes, capacity, and health.
+- [x] Inspect current MCP resolution and capture consumers without printing credentials.
+- [x] Define staged activation, writer pause, fresh backup, migration, readiness, restart, and rollback gates.
+- [x] Close Fable's plan review at effort `max`.
+- [x] Verify the completed document and record the reviewed plan.
+
+Current deployment gates remain open: kernel memory pressure level `2`, unstaged pinned MCP bridge and exact network profile,
+unexecuted fresh cold backup, and explicit acceptance of the rollback boundary after ordinary writers resume.
+The old heap warning uses allocated V8 heap size. The OS also reports warning pressure; the two measurements must remain distinct.
+Private planning evidence is under `/Users/bakman/.agentmemory-labs/cutover-plan-20261006.FzaCiC/`.
+
+Fable returned READY FOR PLAN after the default spool paths and original recovery environment were made explicit.
+The plan now records the actual CLI metadata names, phase-specific SDK selection, copied helper hash checks,
+and the pinned index checkpoint interval. These are recording corrections, not new runtime changes.
+The final acceptance is `fable-final-acceptance.md` in the private planning directory. Execution remains outside this completed planning phase.
+
+Documentation verification passed: shell blocks parsed with `zsh -n`, all seven local links resolved, fences were balanced,
+and `git diff --cached --check` reported no errors. A missing-stage guard produced no continuation marker.
+Only the cutover plan and this progress record changed. No application build or unit suite was rerun for these documentation edits.
