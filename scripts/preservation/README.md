@@ -1,7 +1,58 @@
 # Preservation tools
 
-Use these tools with private, owner-only evidence storage. They do not stop processes, launch engines, or change application state.
+Use these tools with private, owner-only evidence storage. Inventory tools do not stop processes or launch engines.
+The consumer probe owns one bridge child and closes it gracefully. Recall can update daemon access metadata.
 Every output path must be new. Evidence files use mode `0600`; new directories use mode `0700`.
+
+## Engine start configuration
+
+```sh
+node scripts/preservation/launch-config.mjs /ABSOLUTE/PRISTINE.yaml /ABSOLUTE/PRIVATE/STARTS
+```
+
+Run before every direct engine start. The parent must exist with owner-only access.
+The command creates a new start directory, copies the pristine YAML, and selects an empty filesystem configuration directory.
+It requires explicitly seeded state and stream file stores. It rejects stripped templates and an `iii-exec` application launcher.
+Only the configuration directory changes; the reviewed storage paths and intervals stay intact.
+Use the returned `config` path for that start. Retain every prior start directory.
+Engine `0.22.1` strips seeded blocks from its launched YAML. Reusing that stripped file can initialize state in memory.
+A successful empty inventory does not prove that persisted file adapters loaded. Verify nonempty state and stream readback across restart.
+This preparation tool never launches a process or deletes files.
+
+## MCP consumer gate
+
+```sh
+node scripts/preservation/consumer-probe.mjs --help
+node scripts/preservation/consumer-probe.mjs \
+  --bridge /ABSOLUTE/STAGED_PACKAGE/plugin/scripts/plugin-bridge.mjs \
+  --url http://127.0.0.1:4411 --query RARE_TOKEN --known-id KNOWN_OBSERVATION_ID \
+  --expected-tools 54 --expected-tools-file PRIVATE/approved-tool-names.json \
+  --out /ABSOLUTE/PRIVATE/consumer-result.json
+```
+
+Run the probe with the test runtime's isolated `HOME` and approved environment.
+The bridge uses its normal credential resolver. Do not put secrets in CLI arguments.
+The URL must be explicit loopback HTTP(S). The probe has no default production URL.
+Use `--known-id` repeatedly when the baseline query must return several known IDs.
+Use `--expected-recall-ids-sha256 HASH` instead to compare an exact baseline ID multiset without IDs in command arguments.
+Compute the hash as SHA-256 of the JSON array of returned IDs, sorted lexically with duplicates preserved.
+Hash comparison still requires at least one recalled record. Both ID and hash conditions apply when both are supplied.
+The approved tool file is a JSON array of unique public tool names. This optional file proves exact name equality.
+Without it, the probe checks the expected count and `memory_recall`; the retained name inventory still needs review.
+
+The probe calls `initialize`, `tools/list`, and `tools/call memory_recall` over stdio.
+Initialization and child exit status do not prove usable memory. All specified known IDs must appear within the requested limit.
+The default RPC deadline is 10 seconds. It must remain below the bridge's 15-second deadline.
+Evidence records tool names, counts, durations, hashes, and safe failure categories. It omits raw memory text, IDs, queries, credentials, and stderr.
+The default cumulative stdout limit is 1 MiB. Stderr is limited to 64 KiB.
+An output path must be new, and its parent must have owner-only access. Existing evidence is never replaced.
+
+Exit `0` means the consumer gate passed. Exit `1` means a failed gate; exit `2` means usage or evidence setup failed.
+Authentication, timeout, malformed response, backend failure, missing known recall, and wrong tool inventory remain separate categories.
+For the bridge's combined network error, a separate TCP refusal proves `unreachable`.
+If that check does not prove refusal, the result stays `network_failure`; the probe does not guess the cause.
+The probe closes its own child input, then sends SIGTERM only to that child if needed. It never forces termination.
+No capture or write tool is called. Recall can still update the application's normal access metadata.
 
 ## Physical file coverage
 

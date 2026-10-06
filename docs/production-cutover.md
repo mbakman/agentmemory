@@ -2,6 +2,7 @@
 
 Status: READY FOR PLAN. Fable accepted this procedure at effort `max`. The maintenance window remains blocked by execution gates.
 This document authorizes no production change. Private review evidence is `cutover-plan-20261006.FzaCiC/fable-final-acceptance.md` under `~/.agentmemory-labs/`.
+Reversible staging and current blockers are recorded in [the preflight report](production-cutover-preflight.md).
 
 ## Intent, problem, and deliverables
 
@@ -151,6 +152,13 @@ AGENTMEMORY_URL = "http://127.0.0.1:3111"
 
 Preserve existing unrelated fields, tool approvals, and environment entries after private review.
 Preserve existing API authentication. Use the normal local secret resolver; never print or rotate the secret during cutover.
+Record only the presence and usability of the secret in the live `.env` and `~/.agentmemory/secret` before the freeze.
+Preflight found neither a configured secret nor a stored secret; the effective old worker environment was not inspected.
+New startup can generate a secret. If it logs `Generated an API secret`, record that authentication becomes enforced.
+Prove every bridge, hook, drain, insight command, and viewer reaches the new daemon through the approved secret resolver.
+Check explicit consumer overrides privately; a stale override can supersede the generated file and must be corrected before activation.
+Verify existing hook commands resolve to the new package's scripts. Preserve the generated file in the upgraded image and its sealed backup.
+Keep that new file out of the original-runtime rollback image. Wrong-secret HTTP 401 remains a release gate.
 Set `AGENTMEMORY_URL=http://127.0.0.1:3111`, `AGENTMEMORY_DATA_DIR=/Users/bakman/.agentmemory/data`,
 and `AGENTMEMORY_CAPTURE_SPOOL_DIR=/Users/bakman/.agentmemory/data/capture-spool` where hooks and drains need them.
 Capture settings alone do not pause HTTP writes. Pause host agent actions and hook execution.
@@ -293,7 +301,7 @@ PACKAGE_STAGE="/opt/homebrew/lib/node_modules/@agentmemory/agentmemory.stage-$CU
 PACKAGE_HOLD="/opt/homebrew/lib/node_modules/@agentmemory/agentmemory.hold-$CUTOVER_TAG"
 CUT_RELEASE="$HOME/.local/share/agentmemory/releases/iii-0.22.1-$CUTOVER_TAG"
 CUT_ASSETS="$CUT_RELEASE/bin"
-CUT_ENGINE_CONFIG="$CUTOVER_ROOT/config/production-0221.yaml"
+CUT_ENGINE_TEMPLATE="$CUTOVER_ROOT/config/production-0221.yaml"
 CUT_PROFILE="$CUTOVER_ROOT/config/production-local-only.sb"
 CUT_RUN="$CUTOVER_ROOT/run-prod"
 mkdir -p "$CUT_ASSETS" "$CUTOVER_ROOT/config" "$CUT_RUN" "$CUTOVER_ROOT/tmp" "$CUTOVER_ROOT/logs"
@@ -312,12 +320,18 @@ Copy the tested package with `cp -a "$TESTED_PACKAGE" "$PACKAGE_STAGE"` and comp
 After the new backup seals, copy its `archive/agentmemory` to `APP_STAGE` with the same command form.
 Do not stage application credentials in a lab HOME. This copy is the future production image.
 
-Create the reviewed engine YAML from the integrated template. Preserve HTTP timeout `600000`, loopback listeners, and save intervals `2000` ms.
+Create the reviewed pristine engine YAML from the integrated template. Preserve HTTP timeout `600000`, loopback listeners, and save intervals `2000` ms.
 Set state and stream paths to the canonical production paths. Add an explicit worker-manager at loopback `49134`.
-Remove `iii-exec` from the staged YAML only. Use an explicit `configuration` worker with filesystem adapter
-and directory `$CUT_RUN/persisted-config`, separate from the YAML directory.
-Create that empty owner-only directory. Review the exact YAML diff before the window.
+Remove `iii-exec` from the staged YAML only. Use an explicit `configuration` worker with filesystem adapter.
+Its template directory is a placeholder. `launch-config.mjs` replaces it with a fresh `$CUT_RUN/engine-start-XXXXXX/persisted-config`.
+The tool creates that directory empty with owner-only access. Do not pre-create a shared configuration directory.
+Review the exact YAML diff before the window.
 Use the pinned engine's configuration names; do not carry an old persisted module configuration into this fresh directory.
+Never launch the pristine template itself. Engine startup strips seeded builtin blocks from its input YAML.
+On every engine start, use `launch-config.mjs` to copy the pristine template into a fresh start directory with empty persisted configuration.
+Keep the prior start directories and their rewritten YAML as forensic evidence. Do not reuse the stripped YAML or its persisted configuration.
+Preflight proved that reuse can initialize the state adapter in memory. An empty inventory cannot detect that fault.
+The corrected mapped test preserves nonempty state and stream values across restart with a fresh seed on both starts.
 The worker's audit delay and capture durability estimate read `data/iii-config.runtime.yaml` and the recognized persisted state YAML paths.
 They do not discover this new YAML path automatically. Inspect those paths in the staged copy and record the computed interval.
 Accept the conservative `5000` ms fallback when those paths are absent; it is longer than the engine's `2000` ms interval.
@@ -391,6 +405,21 @@ Move old `iii.pid`, `worker.pid`, `engine-state.json`, and any legacy `engine.js
 Direct engine launch does not create the CLI's engine metadata. Record its actual PID and hash separately.
 The direct app manages its own `worker.pid`. Never use a stale engine PID file as signal authority.
 
+Before each engine start, prepare and record its fresh seed. Run this again for the required restart:
+
+```sh
+set -eu
+cd "$CUTOVER_REPO"
+CUT_START_RECORD="$(mktemp "$CUTOVER_ROOT/config/engine-start-XXXXXX.json")"
+node scripts/preservation/launch-config.mjs "$CUT_ENGINE_TEMPLATE" "$CUT_RUN" > "$CUT_START_RECORD"
+CUT_ENGINE_CONFIG="$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).config)' "$CUT_START_RECORD")"
+test -f "$CUT_ENGINE_CONFIG"
+```
+
+The preparation command requires explicit state and stream file stores. A stripped YAML fails that check.
+It changes only the configuration directory. State and stream storage paths stay at their reviewed locations.
+It does not start or stop any process. The shell stops on preparation failure before any engine launch.
+
 In one supervised terminal, launch the engine and capture private logs:
 
 ```sh
@@ -427,6 +456,8 @@ Keep raw blockers and each separate reviewed exception.
 `Ready` and `livez.viewerPort` alone do not prove index readiness.
 The app can log a rebuild failure and then emit `Ready` at [src/index.ts](../src/index.ts).
 MCP `initialize` also succeeds without backend access; it cannot replace the actual `tools/list` and known-query checks.
+Run the consumer probe after the status and index readiness gates.
+Use `--known-id` for Phase-B recall acceptance. Exact result hashes used in the old-runtime self-test can change after index coverage improves.
 Inspect authenticated `GET /agentmemory/status` through the existing secret resolver.
 Require these measured gates:
 

@@ -99,3 +99,29 @@ The final acceptance is `fable-final-acceptance.md` in the private planning dire
 Documentation verification passed: shell blocks parsed with `zsh -n`, all seven local links resolved, fences were balanced,
 and `git diff --cached --check` reported no errors. A missing-stage guard produced no continuation marker.
 Only the cutover plan and this progress record changed. No application build or unit suite was rerun for these documentation edits.
+
+## Cutover preparation — 2026-10-06
+
+Preparation evidence: `/Users/bakman/.agentmemory-labs/cutover-preflight-mgHfKS/`.
+See [the preflight report](production-cutover-preflight.md) for asset paths, measured limits, and remaining gates.
+
+- [x] Copy the full tested package and embedding cache to a sibling stage; compare all 13,256 files.
+- [x] Stage and verify the aligned engine/helper assets; prove PATH discovery.
+- [x] Prepare explicit production YAML and network profiles without activating them.
+- [x] Prove mapped empty-engine startup, saved configuration, and native transport.
+- [x] Correct the stripped-YAML restart fault and preserve nonempty state and stream fixtures across a fresh-seed restart.
+- [x] Add the maintained stdio consumer probe and nineteen offline tests.
+- [x] Test the staged bridge and both insight commands against unchanged production.
+- [x] Run build, all seventeen skill checks, and the final full suite: 2,914 tests passed with two workers; two skipped.
+- [ ] Close the capacity gate. Eleven warning-level samples and increasing swapouts block cutover.
+- [ ] Prove the full worker launch and peak memory budget after capacity passes.
+- [ ] Confirm the writer pause, execution approval, and post-release rollback boundary.
+- [ ] Take the fresh cold backup and pass the candidate/original-restore gates.
+- [ ] Activate, measure migration, test new-runtime auth/capture/restart, and switch consumers.
+
+The old backend accepted the wrong-secret MCP control. Keep the new-runtime authentication gate open.
+Presence-only inspection found no configured or stored secret. Require every consumer to resolve the new secret if startup generates it.
+Retain the original failed restart logs. Every future engine start must use a fresh pristine YAML and empty configuration directory.
+The normal consumer test found 54 tools and the expected two recall IDs. The refused-port control failed visibly.
+Production worker `73154` and engine `73177` were not signaled. No cutover, push, main merge, or cleanup occurred.
+Fable accepted the revised preparation at effort `max`. The final review closed both findings; capacity still blocks cutover.
