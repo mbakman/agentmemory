@@ -498,7 +498,7 @@ describe("Reflect", () => {
       vi.setSystemTime(now + 604800001);
       expect((await sdk.trigger("mem::reflect", {})).clustersProcessed).toBe(1);
       expect(provider.summarize).toHaveBeenCalledTimes(2);
-      const audits = await kv.list<AuditEntry>(KV.audit);
+      const audits = await kv.list<AuditEntry>(KV.auditMonth("2026-10"));
       expect(audits[1].details).toMatchObject({ clustersProcessed: 0, clustersSkipped: 0, clustersCooledDown: 1 });
     });
 
@@ -657,7 +657,7 @@ describe("Reflect", () => {
       const result = await sdk.trigger("mem::reflect", {});
       expect(result).toMatchObject({ clustersProcessed: 1, clustersSkipped: 1, clustersCooledDown: 1 });
       expect(provider.summarize).toHaveBeenCalledOnce();
-      const [audit] = await kv.list<AuditEntry>(KV.audit);
+      const [audit] = await kv.list<AuditEntry>(KV.auditMonth("2026-10"));
       expect(audit.details).toMatchObject({ clustersProcessed: 1, clustersSkipped: 1, clustersCooledDown: 1 });
     });
   });

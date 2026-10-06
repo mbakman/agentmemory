@@ -1,4 +1,5 @@
 import { hydrateProcessEnvFromFile } from "../config.js";
+import { resolveClientSecret } from "../secret-store.js";
 
 export interface InsightSearchOptions {
   query: string;
@@ -75,6 +76,8 @@ path prefix), III_REST_PORT (used when AGENTMEMORY_URL is unset; default
 3111), AGENTMEMORY_SECRET, and AGENTMEMORY_INSIGHTS_TIMEOUT_MS (total
 request timeout in milliseconds, 1 to 2147483647, default 10000). Values
 may also come from ~/.agentmemory/.env.
+Local searches also read ~/.agentmemory/secret. For a remote server,
+set AGENTMEMORY_SECRET explicitly in the process environment.
 
 Exit status:
   0  results printed, no insight matched, or the reader closed the output
@@ -356,6 +359,14 @@ function requestHeaders(env: NodeJS.ProcessEnv): Record<string, string> {
   return headers;
 }
 
+export function resolveInsightClientEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const endpoint = resolveSearchEndpoint(env);
+  return {
+    ...env,
+    AGENTMEMORY_SECRET: env.AGENTMEMORY_SECRET || resolveClientSecret(endpoint.href, env),
+  };
+}
+
 export async function searchInsights(
   options: InsightSearchOptions,
   env: NodeJS.ProcessEnv = process.env,
@@ -489,8 +500,10 @@ export async function runInsightsCli(args: string[], compatibility = false): Pro
     if (ignored.length > 0) {
       await writeOutput(`${prefix}: note: ignoring one-character term(s) ${ignored.map(quote).join(", ")}; the server searches only terms of 2 or more characters\n`, true);
     }
+    const explicitSecret = process.env.AGENTMEMORY_SECRET;
     hydrateProcessEnvFromFile();
-    const { insights, truncated } = await searchInsights(options);
+    const env = resolveInsightClientEnv({ ...process.env, AGENTMEMORY_SECRET: explicitSecret });
+    const { insights, truncated } = await searchInsights(options, env);
     if (options.json) {
       await writeOutput(`${JSON.stringify({ success: true, query: options.query, limit: options.limit, truncated, insights })}\n`);
     } else if (insights.length === 0) {

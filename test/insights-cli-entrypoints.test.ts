@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
@@ -18,6 +20,7 @@ const distEntries = { agentmemory: "cli", "agentmemory-insights": "insights-cli"
 type Binary = keyof typeof distEntries;
 type SpawnIo = { closeStdoutAfterFirstChunk?: boolean; closeStderr?: boolean };
 let baseUrl: string;
+const fixtureHome = mkdtempSync(join(tmpdir(), "am-insights-entrypoints-"));
 let spawned = 0;
 let requests: Array<{ path: string; body: unknown; auth: string | undefined }>;
 let respond: (response: ServerResponse) => void;
@@ -65,7 +68,7 @@ afterAll(async () => {
 
 function spawnCli(binary: Binary, args: string[], env: NodeJS.ProcessEnv = {}, io: SpawnIo = {}) {
   // The timeout sends the default SIGTERM and never escalates: a child that survives it fails its test.
-  const options = { env: { ...process.env, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env }, timeout: 30_000 };
+  const options = { env: { ...process.env, HOME: fixtureHome, USERPROFILE: fixtureHome, AGENTMEMORY_URL: baseUrl, AGENTMEMORY_SECRET: "", ...env }, timeout: 30_000 };
   spawned++;
   return new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((done, reject) => {
     const child = installed
@@ -117,6 +120,17 @@ describe.each([false, true])(`${installed ? "installed" : "built"} insight entry
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout).insights).toHaveLength(2);
     expect(requests[0].auth).toBe("Bearer fixture-secret");
+  });
+
+  it("authenticates local searches with the generated secret file", async () => {
+    const home = mkdtempSync(join(tmpdir(), "am-insights-secret-"));
+    mkdirSync(join(home, ".agentmemory"), { mode: 0o700 });
+    writeFileSync(join(home, ".agentmemory", "secret"), "generated-fixture-secret\n", { mode: 0o600 });
+    const result = await run(compatibility, ["example", "--json"], { HOME: home, USERPROFILE: home });
+    expect(result.code).toBe(0);
+    expect(requests[0].auth).toBe("Bearer generated-fixture-secret");
+    expect(result.stdout).not.toContain("generated-fixture-secret");
+    expect(result.stderr).toBe("");
   });
 
   it("flushes a large result to a pipe before exiting", async () => {
