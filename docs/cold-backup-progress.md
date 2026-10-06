@@ -18,7 +18,7 @@ Private evidence root: `/Users/bakman/.agentmemory-labs/cold-20261006.3DMTEk`. N
 - [x] Upstream integration worktree, four conflicts resolved, iii 0.22.1 alignment.
 - [x] Migration comparisons, regression checks, npm package, installed CLI matrix.
 - [x] Original-runtime rollback rehearsal.
-- [ ] Fable max-effort review and readiness report.
+- [x] Fable max-effort review and readiness report.
 
 The user permits interruption of other agents for the initial maintenance window. All later tests must leave unchanged production available.
 
@@ -67,3 +67,7 @@ The final coverage report derives the exact rebuild walk and matches the capture
 Physical store files reconcile as 4,865 − 389 + 247 = 4,723. All 261 active BM25 and 127 active vector shard files were removed by stock migration, along with one legacy audit file. New files contain vector buckets, monthly audits, indexes, metadata, and the controlled fixture. There are no unexplained additions or removals. The copy retains 353 unreferenced legacy files. No cleanup occurred.
 
 The negative rollback test used engine `0.11.2` alone on another cold migrated copy. The four old root index keys were absent; v3 metadata remained. The old audit scope was empty and monthly metadata remained. Some unreferenced legacy generations remained, but the old reader lacks their manifests. All state and stream list reads succeeded. Unconfigured queue reads and resolved undefined legacy-key reads remain explicit negative-test gaps. Both negative-test engines exited gracefully. The final upgrade drain lasted 23.494 seconds and all copied files matched.
+
+Final source and validation assembly: `ecc94ffe079a5c1311bcfc639a204018b8b79dc0`. `npm run build` passed. `npm test` passed 2,891 tests in 241 files, with two skipped. `npm run skills:check` passed 17 skills. The installed-command matrix passed 93 cases. Runtime code matches the end-to-end tested package `ba4df8ace65915e102cd016d04973d3bb063d8a48dfe640f5fcee3a279704d53`. Exact source, lock, toolchain, and content-equivalence evidence are recorded privately. Plugin ZIP timestamps and build-info revision account for archive-byte differences; bit-identical packaging is not claimed.
+
+Fable `claude-fable-5-1`, native 1M context, effort `max`, accepted the isolated rehearsal as READY with no remaining blocker. No Ultracode consultation occurred. The readiness report records the proof limits and separate cutover requirements. Production closure checks passed known recall, both installed insight names, and viewer access. The original worker and engine identities remain. Health still reports the existing memory-pressure alert. All test runtimes exited gracefully. No forced termination, cleanup deletion, global upgrade, main merge, or push occurred.

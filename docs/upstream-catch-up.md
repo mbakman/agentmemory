@@ -76,12 +76,12 @@ After the correction, `npm run build` passed. `npm test` passed 2,863 tests in 2
 
 ## Release gate
 
-These checks validate the integrated source and package. The verification lane must still compare migration results, prove rollback, and obtain Fable acceptance. No production cutover, global upgrade, main merge, or push occurs as part of this source integration step.
+These checks validate the integrated source and package. Migration, rollback, restart, and Fable acceptance are now complete. The final merged suite passed 2,891 tests, with two skipped. See [readiness report](upstream-readiness.md) for current results and package linkage. No production cutover, global upgrade, main merge, or push occurred.
 
 The source review gates remain explicit:
 
 - Rollback must restore the original store and runtime together. The upgrade migrates legacy index files; a binary change alone cannot restore them.
 - Any future production launch must set `AGENTMEMORY_DATA_DIR` to `/Users/bakman/.agentmemory/data`. Engine storage, audit migration, and capture spool must use the same directory.
-- Before cutover, test the actual MCP registry shim against the isolated runtime with authentication enabled. In-repository client tests do not prove that external shim's behavior.
+- The actual MCP shim reached the isolated runtime with authentication enabled. The tested lock pins shim `0.9.29` and implementation `0.9.30`. Before cutover, verify the actual deployed resolution and remote mode. Invalid authentication can fall back silently to seven local tools, even with forced proxy enabled.
 
-The startup search race is corrected in this package. These other gates still require measured runtime evidence and advisor acceptance.
+The startup search race is corrected in this package. The runtime rehearsal and advisor acceptance passed. Production cutover requires a separate approved plan.
