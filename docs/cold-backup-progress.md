@@ -354,3 +354,9 @@ No product code changed. The complete wrap-up is [maintenance-wrap-up.md](mainte
 
 The user reviewed the two earlier physical archive paths and selected **Keep both earlier backups**.
 All three physical archives and both original holds remain protected. The final disk check reported approximately 75.9 GiB available.
+
+The final backup-choice annotation in Obsidian is unconfirmed. Its native append stalled; an uncached read still showed the prior dated report.
+The verified secondary CLI client received SIGTERM after its exact command and parent were checked, but it did not exit. No forced termination followed.
+A main-note annotation attempt returned empty output. That latest annotation is also unconfirmed.
+The five earlier core note updates passed uncached readback before these attempts. Source and private receipts retain the explicit backup decision.
+Complete the remaining vault annotation after manual Obsidian recovery under the CLI skill. Production engine and worker identities remained unchanged.

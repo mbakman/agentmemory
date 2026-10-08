@@ -84,6 +84,11 @@ The original historical reports remain available.
 Uncached reads through the Obsidian CLI and vault API verified the saved content.
 The normal CLI read returned stale cached text after overwrite, so it was not accepted as write verification.
 
+The later backup-retention annotation is unconfirmed. A native append stalled, and the main-note annotation attempt returned empty output.
+The five core updates above passed uncached readback before those attempts. The source and private cleanup receipt retain the user's backup choice.
+The identified secondary CLI client received SIGTERM but remained running. No forced termination or Obsidian app restart occurred.
+The remaining annotation requires manual Obsidian recovery under the CLI safety skill.
+
 No product code changed during this cleanup and documentation work.
 The cutover build, test, and skill results remain in [production-cutover-results.md](production-cutover-results.md).
 Those suites were not repeated for these documentation edits.
