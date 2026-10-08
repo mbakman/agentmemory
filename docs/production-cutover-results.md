@@ -77,6 +77,8 @@ BM25 covers the eligible set. Full vector backfill remains a separate recorded d
 The running engine and helpers come from `~/.local/share/agentmemory/releases/iii-0.22.1-cutover-preflight-mgHfKS/bin`.
 The global older engine assets remain preserved. The production launch selects the reviewed release directory explicitly.
 The engine and worker run in `agentmemory-engine-0221` and `agentmemory-worker-0221` tmux sessions.
+Their existing windows are also linked into tmux session `agentmemory` as `engine-0221` and `worker-0221`.
+That session's `logs` window displays the worker log. Adding these views did not restart either process.
 Private launch commands, logs, profiles, configuration seeds, and comparison evidence remain under the final cutover root.
 Every later engine start must use [launch-config.mjs](../scripts/preservation/launch-config.mjs) with the pristine template and a fresh start directory.
 Never reuse a launched engine YAML. Startup rewrites its persistent module configuration.

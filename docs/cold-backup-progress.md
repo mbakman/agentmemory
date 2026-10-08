@@ -318,3 +318,12 @@ Existing hosts were not reloaded automatically. New configured profile connectio
 Generation features remain disabled pending their separate recorded restoration. The 39,828 eligible documents without vectors remain a separate backfill decision.
 The default macOS spool directory now exists and must be included in future full images. No main merge, cleanup deletion, forced termination, or RAM measurement occurred.
 Production cutover is complete. The detailed record is [production-cutover-results.md](production-cutover-results.md).
+
+### Tmux visibility and disk wrap-up
+
+The live engine and worker were already tmux children. Their windows are now linked into the original `agentmemory` session as windows 1 and 2.
+Window 3 displays the worker log. The original shell remains preserved in window 0. No restart or duplicate worker occurred.
+Fresh authenticated status and viewer access returned HTTP 200. The engine remains `0.22.1`, with a ready index and connected file state.
+Disk has 64 GiB available; all test labs report 110 GiB. No further test copy is planned.
+Six inactive test-store directories report about 12 GiB combined. Their exact cleanup review is private at `evidence/cleanup-review.md` under the final cutover root.
+Cleanup requires explicit approval under the user's deletion rule. No file was deleted. Preserve all archives, evidence, packages, rollback holds, and active runtime paths.
