@@ -13,6 +13,7 @@ The observed free-space increase was 18,253,652 KiB, approximately 17.4 GiB.
 Free space increased from approximately 63.7 GiB to 81.1 GiB.
 APFS clone sharing means the reported copy sizes exceed recovered space.
 Concurrent filesystem activity can also affect this delta.
+The final disk check reported approximately 75.9 GiB available.
 
 The exact removal receipt is private at:
 `~/.agentmemory-labs/cutover-final-20261008.Kd7M2q/evidence/cleanup-receipt.json`.
@@ -33,6 +34,7 @@ Three physical archives remain:
 These paths are under `~/.agentmemory-labs`.
 The two earlier archives are not byte-identical duplicates of the final state.
 Specific path approval is required before giving up those earlier backup points.
+The user reviewed both paths and selected **Keep both earlier backups**. Retain all three physical archives.
 The original application and package hold paths remain protected.
 Later production writes still require a new full image and reconciliation before rollback.
 
@@ -92,4 +94,3 @@ Keep generation and scheduled destructive features disabled until their separate
 The 39,828-record vector coverage gap and 500-observation session cap remain separate decisions.
 Twenty-one unmapped rejected maintenance spool attempts remain an explicit capture coverage gap.
 The draft fork PR is not merged into main.
-

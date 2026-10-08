@@ -351,3 +351,6 @@ Uncached vault API reads through the CLI verified the saved text. Historical rep
 The main note, cheatsheet, and new `2026-10-08_Production_Cutover_and_Harness_Status` note describe current operation.
 The two incident notes mark the installed-bundle patch maintenance item closed for the designated package.
 No product code changed. The complete wrap-up is [maintenance-wrap-up.md](maintenance-wrap-up.md).
+
+The user reviewed the two earlier physical archive paths and selected **Keep both earlier backups**.
+All three physical archives and both original holds remain protected. The final disk check reported approximately 75.9 GiB available.
