@@ -327,3 +327,27 @@ Fresh authenticated status and viewer access returned HTTP 200. The engine remai
 Disk has 64 GiB available; all test labs report 110 GiB. No further test copy is planned.
 Six inactive test-store directories report about 12 GiB combined. Their exact cleanup review is private at `evidence/cleanup-review.md` under the final cutover root.
 Cleanup requires explicit approval under the user's deletion rule. No file was deleted. Preserve all archives, evidence, packages, rollback holds, and active runtime paths.
+
+### Approved cleanup, harness readout, and vault update
+
+The user approved removal of inactive leftovers. Fifty-nine test-store and runtime-copy directories were removed.
+The observed free-space increase is approximately 17.4 GiB; approximately 81.1 GiB remains available.
+APFS clone sharing means removed copy sizes do not equal recovered space. Production did not restart.
+The exact private receipt is `evidence/cleanup-receipt.json` under the final cutover root.
+All listed paths are absent. Protected production paths, archives, original holds, reports, and designated artifacts remain.
+The final seal, designated npm artifact, and dependency lock still have their expected hashes.
+The two earlier physical archives remain optional cleanup candidates, approximately 11.2 GiB combined.
+They contain earlier states and require specific path approval before retirement.
+
+Fresh deployed Codex, Claude, and Cursor profiles each returned all 54 tools and both known recall records, without fallback.
+The current Codex app uses the pinned bridge. Older open Claude or Cursor connections can require an MCP reconnect.
+Claude has 12 active capture hooks; Codex has six. Cursor has no global agentmemory capture hook.
+The inaccurate shared rule sentence was corrected in its canonical helper source and the three deployed guidance copies.
+The helper source correction remains local. No GitLab push or broad synchronization occurred.
+Both installed insight commands returned two compact results after cleanup. The viewer returned HTTP 200.
+
+Five agentmemory notes in `Baha_NVIDIA_Vault` were updated through the Obsidian CLI.
+Uncached vault API reads through the CLI verified the saved text. Historical reports retain their original evidence.
+The main note, cheatsheet, and new `2026-10-08_Production_Cutover_and_Harness_Status` note describe current operation.
+The two incident notes mark the installed-bundle patch maintenance item closed for the designated package.
+No product code changed. The complete wrap-up is [maintenance-wrap-up.md](maintenance-wrap-up.md).

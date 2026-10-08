@@ -93,3 +93,7 @@ After ordinary writers resume, take a new full image and reconcile later writes 
 The pre-cutover archive alone cannot preserve records added after writer release.
 Follow [the rollback procedure](production-cutover.md#rollback-and-preservation-of-later-writes).
 No cleanup deletion or main merge is part of this cutover.
+
+After cutover, the user approved removal of inactive test stores and runtime copies.
+Production remained active. All physical archives and original hold paths remain protected.
+Current harness and vault results are in [maintenance-wrap-up.md](maintenance-wrap-up.md).

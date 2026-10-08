@@ -1,5 +1,10 @@
 # Cold backup and original restore
 
+The accepted final backup is now `~/.agentmemory-labs/cutover-final-20261008.Kd7M2q/archive`.
+The October 6 archive below remains a historical backup point. Later maintenance retired inactive test-store and runtime-copy directories.
+Reconstruct an independent test runtime from a retained archive before reusing these historical commands.
+See [production-cutover-results.md](production-cutover-results.md) for the final restore proof and [maintenance-wrap-up.md](maintenance-wrap-up.md) for retained paths.
+
 The cold backup and original-runtime restore passed on 2026-10-06. Unchanged production was restarted after the backup.
 Upstream migration preserved the protected records and vectors on an isolated copy. Final restart and review results are recorded in the readiness report. This guide does not authorize a production upgrade or rollback window.
 
