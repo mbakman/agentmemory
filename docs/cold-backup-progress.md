@@ -113,8 +113,8 @@ See [the preflight report](production-cutover-preflight.md) for asset paths, mea
 - [x] Add the maintained stdio consumer probe and nineteen offline tests.
 - [x] Test the staged bridge and both insight commands against unchanged production.
 - [x] Run build, all seventeen skill checks, and the final full suite: 2,914 tests passed with two workers; two skipped.
-- [ ] Close the capacity gate. Eleven warning-level samples and increasing swapouts block cutover.
-- [ ] Prove the full worker launch and peak memory budget after capacity passes.
+- [x] RAM capacity gate waived by the user on 2026-10-08. No further RAM pressure, peak, or reserve checks are required.
+- [x] Prove the full worker functional launch with the current toolchain and isolation profile.
 - [ ] Confirm the writer pause, execution approval, and post-release rollback boundary.
 - [ ] Take the fresh cold backup and pass the candidate/original-restore gates.
 - [ ] Activate, measure migration, test new-runtime auth/capture/restart, and switch consumers.
@@ -125,3 +125,81 @@ Retain the original failed restart logs. Every future engine start must use a fr
 The normal consumer test found 54 tools and the expected two recall IDs. The refused-port control failed visibly.
 Production worker `73154` and engine `73177` were not signaled. No cutover, push, main merge, or cleanup occurred.
 Fable accepted the revised preparation at effort `max`. The final review closed both findings; capacity still blocks cutover.
+
+## Capacity recheck — 2026-10-07
+
+Private evidence: `/Users/bakman/.agentmemory-labs/cutover-capacity-20261007.Qzfaqc/`.
+The five-minute sample ran from 19:46:21 to 19:51:21 EDT. Eight samples reported pressure level `1`; the last three reported level `2`.
+Swapouts increased by 47,305 pages, or 775,045,120 bytes. Pressure therefore fails the required level `1` gate.
+No build, migration, test runtime, or new application worker ran during this sample. Existing host workloads continued.
+The full new worker peak and 4 GiB reserve remain unproved. Do not activate the staged runtime on this result.
+
+Today's checks reached the original worker `73154` and engine `73177`, with their original start times and commands.
+Liveness and viewer requests returned HTTP 200. Observation recall returned three results; guarded insight search returned two results with truncation reported.
+All three staged engine asset hashes still match the reviewed release. Disk space was about 109.2 GiB; the full source-size estimate was not refreshed.
+No production signal, fresh cutover backup, package activation, consumer edit, push, main merge, or cleanup occurred.
+Next required work remains a stable capacity check, full worker launch and memory measurement, and the fresh backup and restore gates before activation.
+
+## Quiet check and isolated engine trial — 2026-10-08
+
+Private evidence: `/Users/bakman/.agentmemory-labs/cutover-capacity-20261008.cXzKmz/`.
+The quiet check passed from 14:04:34 to 14:09:35 EDT: eleven pressure-level `1` samples and no swapout growth.
+Liveness and viewer requests returned HTTP 200. Recall and guarded insight search each returned two results.
+The original worker `73154` and engine `73177` kept their start times and commands. Health retained its existing heap warning; state connectivity was good.
+
+A new private trial copied the earlier migrated rehearsal image, without an archived `.env` or secret.
+All 4,723 data files and 13,256 package files match their sources, including the metadata comparison's stated root exception.
+Six copied symlink timestamps were corrected; the initial mismatch report remains preserved.
+Actual data-read probes denied production and archive reads. Network probes denied production ports and external connections.
+The first access-only probe did not test data reads; its result remains preserved separately.
+
+Engine `0.22.1` launched on trial ports `4411`, `4412`, and `50434` with a fresh seeded YAML and cwd `worker-trial/run`.
+Its metadata-only inventory found 2,668 state scopes and one stream, with no read gaps. This is not a complete value comparison.
+All 111 samples taken while the engine remained present reported pressure level `2`; swapouts did not increase.
+The observed engine RSS peak was 467,648,512 bytes. RSS excludes compressed memory and does not prove the full process footprint or startup peak.
+The verified trial engine `87684` exited normally after SIGTERM. Its assigned ports became free. The application worker never started.
+The larger current production image, full worker peak, capture/restart behavior, and 4 GiB reserve remain unproved.
+These observations do not identify which host workload caused the pressure.
+
+Global Node now reports `26.11.0` and npm `11.20.0`; the reviewed toolchain was `26.10.0` and `11.19.1`.
+The archived Node `26.10.0` hash still matches. Copied libraries were not proved to be the libraries actually loaded by the inventory process.
+Fable at effort `max` returned HOLD for toolchain alignment, dynamic-library proof, and explicit cwd records.
+The launch record now states the actual engine cwd and the intended worker cwd. A hardened, unexecuted profile also denies the macOS-default production spool and writes to the trial configuration directory.
+The next trial will separately validate the current Node toolchain to match the production command sheet. No global downgrade is planned.
+Per-process kernel footprint peaks and native host statistics are required for the RAM budget; free percentages and sampled RSS alone are insufficient.
+The user was asked to pause other agent jobs and close optional apps before another full trial. No such pause has been confirmed.
+
+No production signal, fresh cutover backup, activation, consumer edit, push, main merge, or cleanup occurred.
+No build or unit suite was run in this status check. Cutover remains blocked on the full runtime and fresh backup gates.
+
+## RAM gate waived — 2026-10-08
+
+The user instructed us to skip RAM checks. This supersedes the earlier capacity blockers and optional-app pause request.
+Do not measure RAM pressure, swapout growth, process peaks, or the 4 GiB RAM reserve during further preparation.
+RAM or heap alerts alone do not block cutover. This waiver does not change the backup's data inventory or checksum requirements.
+Continue with the current-toolchain checks, mapped full-worker launch, fresh backup, restore proof, migration, and functional acceptance.
+The earlier trial evidence remains retained. No unrelated application is stopped for capacity.
+
+## Current toolchain and functional restart — 2026-10-08
+
+Node `26.11.0` and npm `11.20.0` passed `npm run build`, `npm test -- --maxWorkers=2`, and `npm run skills:check`.
+The suite passed 2,914 tests in 243 files, with two skipped tests. All 17 skills passed.
+Private logs: `/Users/bakman/.agentmemory-labs/toolchain-20261008.KjuvCB/`.
+
+The mapped full worker used current Node, the hardened profile, and explicit `worker-trial/run` cwd.
+No archived-library equivalence is claimed. Older environment files are superseded by `config/current-node-environment.json`.
+The first start loaded 117,751 vectors and rebuilt 147,466 BM25 documents.
+The bridge returned the approved 54 tools and both known recall IDs. Both insight commands returned two results.
+The native empty query returned zero results. Wrong authentication failed visibly. The viewer returned HTTP 200.
+One installed-hook fixture retained its exact raw payload. Graceful restart loaded 117,752 vectors and rebuilt 147,467 BM25 documents.
+After replay, one observation and one event remained. Both known recall IDs still matched; keyword rebuild was finished.
+Transient connection refusal occurred while the restarted engine loaded its stores. The worker reconnected and reached Ready.
+An initial launch used an incorrect package path and exited before startup. Its log remains retained.
+An early file scan raced the pending-vector file removal during persistence. This scan did not produce a complete manifest.
+These functional results do not prove migration of the newer production image. The fresh backup and migration comparisons remain required.
+
+Fable closed cwd and archived-library findings under the current-Node decision. No new functional launch blocker was found.
+The current-toolchain results above close its remaining validation item. RAM capacity checks were not run.
+Fresh execution root: `/Users/bakman/.agentmemory-labs/cutover-execution-20261008.ofhuBX/`.
+Static runtime assets passed all 30 file comparison groups, covering 15,780 regular files with zero differences.
+The live worker and engine remain unchanged. Fresh cold backup, original restore, activation, and consumer switch remain open.

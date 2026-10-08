@@ -1,7 +1,8 @@
 # Production cutover plan — 2026-10-06
 
 Status: READY FOR PLAN. Fable accepted this procedure at effort `max`. The maintenance window remains blocked by execution gates.
-This document authorizes no production change. Private review evidence is `cutover-plan-20261006.FzaCiC/fable-final-acceptance.md` under `~/.agentmemory-labs/`.
+The user authorized cutover execution and waived RAM capacity checks on 2026-10-08. The remaining data preservation and functional gates still apply.
+Private review evidence is `cutover-plan-20261006.FzaCiC/fable-final-acceptance.md` under `~/.agentmemory-labs/`.
 Reversible staging and current blockers are recorded in [the preflight report](production-cutover-preflight.md).
 
 ## Intent, problem, and deliverables
@@ -43,7 +44,7 @@ Two kernel samples reported `kern.memorystatus_vm_pressure_level: 2`. Swap use w
 The old health calculation uses `heapUsed / heapTotal`, not physical RAM or the V8 heap limit.
 The new source uses the V8 limit when available at [src/health/thresholds.ts](../src/health/thresholds.ts).
 These facts do not prove a physical RAM shortage or a safe peak memory budget.
-Keep the maintenance window blocked until a new capacity check passes.
+The user waived the RAM capacity gate on 2026-10-08. These historical observations no longer block execution.
 Private planning evidence is in `~/.agentmemory-labs/cutover-plan-20261006.FzaCiC/`.
 
 The deployed Codex, Claude, and Cursor MCP configurations use unpinned `npx -y @agentmemory/mcp`.
@@ -61,9 +62,8 @@ Do not add a new Cursor capture integration in this cutover. Validate the captur
 2. Finish Fable review with `claude-fable-5-1`, native 1M context, effort `max`. Close plan blockers.
 3. Stage the complete runtime, dependencies, managed hook assets, and consumer lock outside production.
 4. Prove helper discovery and the exact launch command. No implicit helper install or second app worker is permitted.
-5. Repeat OS memory checks over five minutes. Require kernel pressure level `1`, no sustained swapout increase, and a budget for the measured service plus 4 GiB reserve.
-   The rehearsal sampled about 2.33 GiB combined RSS; it did not measure the peak. Pause optional workloads before this check.
-   Do not change heap limits or stop unrelated programs automatically.
+5. RAM capacity, pressure, swapout, peak measurement, and the 4 GiB RAM reserve are waived by the user.
+   Complete the mapped full-worker functional launch without RAM monitoring. Do not change heap limits or stop unrelated programs automatically.
 6. Require at least three fresh full-image copies plus 10 GiB reserve on each relevant volume.
    The earlier image was 5.8 GB; measure the current image. Planning found 107 GiB disk space available.
 7. Identify every writer, supervisor, detached capture drain, and scheduled task. Confirm the pause through host state and process checks.
@@ -109,7 +109,8 @@ Prepare the complete installed package from the preserved npm workflow and lock.
 Prefer a copy of the tested installed package and its full dependency tree.
 If a fresh installation is needed, use a private prefix with scripts disabled, then compare every dependency against the tested tree.
 A tarball-only `npm install -g` can resolve changed dependency ranges; it is not sufficient.
-Use Node `26.10.0` and npm `11.19.1`, or separately validate any toolchain change.
+Use Node `26.11.0` and npm `11.20.0`. Separate build, full tests, skill checks, and isolated functional restart passed on 2026-10-08.
+The original Node `26.10.0` and libraries remain archived for the original-runtime restore proof.
 Preserve executable modes and the local embedding cache. Test the staged package through non-interactive shells.
 
 Stage the verified engine, worker helper, and console as one versioned asset set.
@@ -469,7 +470,7 @@ Require these measured gates:
 - Index persistence has no save in progress, pending changes, pending log error, or vector shortfall.
 - Audit migration is done. Startup capture recovery and pruning are measured and explained.
 - No fatal, migration, loader, index flush, or unexpected helper error appears in the logs.
-- OS memory remains within the approved budget. The health status is not critical.
+- Check health connectivity and non-memory faults. RAM pressure or heap alerts alone do not block acceptance under the user's waiver.
 
 Use a 120-second initial readiness observation window. If it fails, inspect actual progress before deciding recovery.
 Do not promote the runtime because a timeout expired or a listener answered.
@@ -491,7 +492,7 @@ Keep ordinary consumers paused until all checks pass:
 5. Stop the new worker gracefully, drain the engine, capture the native inventory, stop the engine, and restart both.
    Recheck persistence, known queries, viewer, MCP authentication, capture payload, and replay deduplication.
    Keep the same verified egress profile and initial environment during this restart. Record the new post-restart PIDs and hashes.
-6. Observe ten minutes with writers paused. Check memory, queue/capture state, index errors, and process identities.
+6. Observe ten minutes with writers paused. Check queue/capture state, index errors, and process identities.
 
 The new worker has a four-second flush bound and an eight-second internal exit timer.
 A shutdown exit alone does not prove an index flush. Flush warnings or an internal hard exit block the restart proof.

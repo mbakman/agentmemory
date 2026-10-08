@@ -1,6 +1,6 @@
 # Production cutover preparation — 2026-10-06
 
-Status: preparation complete within the current capacity limit. Production cutover remains blocked.
+Status: preparation assets are staged. The user waived RAM capacity checks on 2026-10-08. The remaining functional and backup gates still apply.
 The application stays at version `0.9.29`. The staged engine, SDK, and helpers use `0.22.1`.
 Production still uses engine and SDK `0.11.2`.
 
@@ -127,8 +127,8 @@ The refusal/fallback diagnostics in the full suite come from injected network pr
 
 ## Remaining execution gates
 
-1. Pause optional workloads and obtain a clean five-minute capacity sample at level `1` without sustained swapout growth.
-2. Prove the full worker memory budget with a 4 GiB reserve. Then complete its mapped launch test.
+1. RAM capacity, pressure, and reserve checks are waived by the user. Do not pause optional apps for those checks.
+2. Complete the mapped full-worker functional launch with the selected toolchain and tested isolation profile.
 3. Confirm a bounded writer pause and execution approval. Account for supervisors, hooks, and detached drains.
 4. Take a fresh full cold backup. Compare candidate RAM values and prove the original restore before activation.
 5. Activate the prepared images. Measure migration, enforce MCP auth, and verify capture and graceful restart.
