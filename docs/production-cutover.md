@@ -1,7 +1,8 @@
 # Production cutover plan — 2026-10-06
 
-Status: READY FOR PLAN. Fable accepted this procedure at effort `max`. The maintenance window remains blocked by execution gates.
-The user authorized cutover execution and waived RAM capacity checks on 2026-10-08. The remaining data preservation and functional gates still apply.
+Execution update — 2026-10-08: production activation, original restore, migration, installed command tests, and graceful restart passed.
+Final preservation review passed, Fable returned READY, and writers resumed at `2026-10-08T21:27:16Z`. See [the execution results](production-cutover-results.md).
+Fable accepted this procedure at effort `max`. The user authorized cutover execution and waived RAM capacity checks.
 Private review evidence is `cutover-plan-20261006.FzaCiC/fable-final-acceptance.md` under `~/.agentmemory-labs/`.
 Reversible staging and current blockers are recorded in [the preflight report](production-cutover-preflight.md).
 

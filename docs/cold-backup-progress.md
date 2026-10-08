@@ -203,3 +203,118 @@ The current-toolchain results above close its remaining validation item. RAM cap
 Fresh execution root: `/Users/bakman/.agentmemory-labs/cutover-execution-20261008.ofhuBX/`.
 Static runtime assets passed all 30 file comparison groups, covering 15,780 regular files with zero differences.
 The live worker and engine remain unchanged. Fresh cold backup, original restore, activation, and consumer switch remain open.
+
+## Active cutover backup window — 2026-10-08
+
+Source commit `aa6d116` is pushed to `mbakman/agentmemory`; draft PR 1 is attached to this chat.
+Private execution root: `/Users/bakman/.agentmemory-labs/cutover-execution-20261008.ofhuBX/`.
+The window started at `2026-10-08T19:08:32Z`. Only agentmemory capture hooks were paused; 43 verified memory MCP clients received SIGSTOP.
+Their PID and start records are in `evidence/mcp-freeze-identities.txt`; resume only the listed live clients with SIGCONT.
+The original Codex and Claude hook files are in `archive/assets/host-config/`. Restore only the changed hook commands.
+Verified worker `73154` exited normally after SIGTERM. Engine `73177` stayed available for the final native inventory.
+All 426,759 readable values matched the isolated original-engine candidate, with zero gaps, differences, or empty-scope exceptions.
+All 5,081 candidate data files matched the stable source image. The engine then received SIGTERM for the cold copy.
+Cold copy and file comparisons are in progress. Do not activate a staged image until original restore and the fresh-image comparisons pass.
+The recovery command remains in `config/recovery.txt`. The original package and application paths are still canonical.
+Capture hooks and MCP clients remain paused. No RAM capacity checks, main merge, cleanup deletion, or forced termination occurred.
+
+### Fresh backup and original restore results
+
+The cold application copy contains 5,551 files. Every source file and relevant metadata matched its archive copy.
+The final archive data matched the candidate's 5,081 files byte for byte. The complete archive contains 21,355 regular files and 6,116,963,023 bytes.
+Seal SHA-256: `c4b93bb8b7ea045f5711880488901e70013acbaefb080e455bb62f062c432119`.
+An independent final-archive restore loaded all 426,759 values, with zero gaps, differences, or scope exceptions.
+Its exact original Node and engine ran the old worker. Recall found both known IDs; both insight commands returned two results.
+The viewer returned HTTP 200. The old worker exited normally after SIGTERM.
+An initial candidate probe ran before the listener opened. It was stopped with SIGTERM and replaced by the successful connected probe.
+An initial restore engine started before its copy completed. It was stopped normally; the final copy passed full checks before relaunch.
+The backup window exceeded its 20-minute budget. Unchanged production recovery started through the original tmux command.
+No canonical application or package swap occurred. Further migration runs must remain isolated until recovery and writer release are complete.
+
+Original production recovered as worker `25685` and engine `25709`, using current Node `26.11.0` and the unchanged application and engine.
+Liveness and viewer returned HTTP 200. The bridge returned 54 remote tools and both known recall IDs; guarded insight search returned two results.
+All 18 original capture commands were restored through targeted edits. All 43 identity-matched memory MCP clients received SIGCONT.
+The original-runtime lab engines received SIGTERM after their completed proofs. Production remains available during the fresh isolated migration.
+RAM checks remain waived. A later activation requires another writer freeze and final cold snapshot because ordinary capture has resumed.
+
+### Fresh migration and final snapshot
+
+The fresh isolated upgrade passed a full graceful restart. All 160,127 original observations, 142 memories, and 117,750 original vectors remained unchanged.
+Startup added 10,078 vectors whose IDs exactly match eligible source records. One identified capture fixture added one observation, event, and vector.
+The final 541,629 values were readable without gaps. Recall, both insight names, limits, empty results, authentication, viewer, capture payload, and replay passed.
+All physical file changes were reconciled. The lab processes exited normally. Raw reports retain expected addition blockers beside narrow reviewed acceptance.
+
+Final execution root: `/Users/bakman/.agentmemory-labs/cutover-final-20261008.Kd7M2q/`.
+Forty-four identity-recorded MCP clients and the 18 capture commands are paused for the final snapshot.
+Worker `25685` and engine `25709` exited after SIGTERM. All 428,320 readable values match the original-engine candidate, with no read gaps or lost values.
+The old engine kept 776 extra empty scopes in RAM; each source read succeeded with zero values. These names have no persisted files.
+The reviewed comparison records this known metadata exception and keeps strict `complete=false`. The raw differences remain private.
+All 5,081 candidate store files match the final archive. All 5,551 cold application files match by content and metadata.
+The complete final archive contains 21,361 regular files. Seal SHA-256: `1e3958f8f00ba0dfeda142f3a373572e48d6e2a5a42f3d8e4286d70b11d68d40`.
+All three configured/default spool paths were absent. The final host settings are under `archive/assets/host-config-final`; earlier copies remain preserved.
+Independent original-runtime restore and final production activation are in progress. No production package or application rename has occurred yet.
+
+The final independent restore passed all 428,320 values, 2,918 persisted scopes, and one stream, with complete coverage and zero differences.
+Its old worker on current Node passed 54 remote tools, both known recall IDs, both insight names, and viewer access. Both lab processes exited normally.
+Fable accepted the fresh rehearsal and final safety prerequisites at effort `max`, including the proved empty-scope metadata exception.
+All four activation renames completed. The unchanged original image and package remain in their recorded hold paths.
+An initial terminal input truncated the long launch command before execution. The failed early probe was stopped with SIGTERM.
+The engine then launched through a direct persistent tmux command. This retained the exact environment without terminal input limits.
+Engine `44240` loaded all 428,320 values exactly. Worker `44820` loaded 117,750 vectors and rebuilt 157,543 BM25 documents.
+Authenticated status returned HTTP 200 with keyword rebuild finished, complete BM25, and no pending vector backfill. The generated secret has mode `0600`.
+Production migration comparisons and acceptance checks remain open. Capture commands and the 44 ordinary MCP clients are still paused.
+
+### Actual production checks and restart
+
+Initial production migration passed. All 160,127 original observations, 142 memories, source payloads, slots, cooldowns, and 117,750 vector bytes remain unchanged.
+The complete inventory contains 531,558 values with no read gaps. Startup added no vectors; the fresh source-derived expected set is empty.
+Audit migration removed 14,328 `index_persist` rows as the documented policy requires. All 26,230 other audit rows remain exact.
+The sealed archive retains the removed audit rows. The earlier empty-scope metadata exception remains explicit.
+
+The native and compatibility insight commands returned the same two IDs with truncation and no source-memory lists.
+An absent token returned zero results. Wrong authentication and a refused port produced visible CLI failures with exit `1`.
+REST rejected a wrong secret with HTTP 401. The viewer returned HTTP 200.
+Targeted MCP edits pinned Codex, Claude, and Cursor to the canonical plugin bridge, local URL, data directory, and spool directory.
+Each configured profile returned the exact 54-tool inventory and both known recall IDs through real stdio.
+The existing cached implementation also passed with the newly stored secret. This proves its resolver works; it does not reload every host connection.
+
+The installed capture fixture retained its exact raw input and output, one observation, and one completed event receipt.
+It added one vector and one BM25 document. Temporary guards in all 12 installed hook entrypoints stopped cached capture commands during restart.
+The guards are operational pauses. Their inverse patch and original hashes are private and must be restored before writer release.
+Worker `44820` exited after SIGTERM; engine `44240` then exited after the 15-second drain. No forced termination occurred.
+The cold data manifest covers 4,940 files. Restart used a fresh engine seed and new persistent tmux commands.
+Engine `51543` and worker `51930` reached Ready at `2026-10-08T20:38:48.944Z`, with 117,751 vectors and 157,544 BM25 documents.
+Known recall and both insight commands passed after restart. Fixture replay and final native preservation checks are in progress.
+The ten-minute service observation started at `2026-10-08T20:39:54Z`; RAM checks remain waived.
+
+Cached hooks still sent requests after their host configuration was paused. Sixty-eight requests reached the existing 500-observation session limit and remain durable dead letters.
+Default spool statistics also report 21 rejected attempts before the first worker was Ready. Their mapping to retained events is not proved.
+This is a maintenance capture coverage gap, not evidence of loss from the sealed memory image. No strict zero-loss claim applies to unfinished or unacknowledged requests.
+Capture commands and the 44 ordinary MCP clients remain paused until final acceptance. Generation and scheduled destructive features remain disabled.
+
+### Final acceptance and writer release
+
+Actual production preservation returned READY. The complete restart inventory has 531,620 values, 2,777 state scopes, and zero read gaps.
+All original observations, memories, raw sources, slots, cooldowns, and vector bytes remain exact. The fixture survived once; replay added no duplicate observation or completion.
+All 68 dead-letter payloads remain saved and belong to two existing capped sessions. The 21 rejected spool requests remain an explicit unmapped coverage gap.
+All cold file changes reconcile: `5,081 - 389 + 248 = 4,940`. Raw blockers remain retained beside narrow reviewed acceptance.
+Advisor-safe acceptance SHA-256: `dffcb576a16c3e0fc6917ae66b52e7204c1e292c0282f8825cf81feb0d14b2b1`.
+
+Service observation recorded 17 successful samples over 818 seconds. The 20:47:37–20:53:31 UTC interval was unsampled; no continuous coverage claim applies.
+Every observed status and viewer response returned HTTP 200. Index work, capture pending, and retries stayed at zero.
+Fable returned final READY at effort `max`. Its five record items were closed or retained as explicit later decisions.
+First-start and restart identities and executable hashes are in `evidence/production-restart-identity-history.json`.
+The mutable read gate is annotated so its initial measurements cannot be confused with restart PID identities.
+
+All 12 temporary installed-hook guards were removed. The patch editor added a final newline to generated files during undo; pristine verified files were restored through preserved-file moves and exact copies.
+All original hook hashes and nanosecond modification times match. The full 13,256-file package comparison found only a hook-directory timestamp difference; that field was restored and verified.
+The initial comparison remains unchanged. Its closure is `evidence/package-hook-restoration-reviewed.json`.
+The two redundant offline analysis processes received normal SIGTERM after identity checks. They had no live connections or production mutations.
+
+The user was told the rollback boundary before final release: later writes require a new full image and reconciliation.
+All 18 capture registrations resumed with targeted explicit environment prefixes. All 44 identity-matched memory MCP clients received SIGCONT at `2026-10-08T21:27:16Z`.
+Unrelated hooks remain unchanged. Post-release status and viewer returned HTTP 200; the standalone fallback file retained its baseline content hash.
+Existing hosts were not reloaded automatically. New configured profile connections use the pinned bridge; all three profiles passed real stdio tests.
+Generation features remain disabled pending their separate recorded restoration. The 39,828 eligible documents without vectors remain a separate backfill decision.
+The default macOS spool directory now exists and must be included in future full images. No main merge, cleanup deletion, forced termination, or RAM measurement occurred.
+Production cutover is complete. The detailed record is [production-cutover-results.md](production-cutover-results.md).

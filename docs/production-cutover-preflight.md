@@ -1,8 +1,9 @@
 # Production cutover preparation — 2026-10-06
 
-Status: preparation assets are staged. The user waived RAM capacity checks on 2026-10-08. The remaining functional and backup gates still apply.
-The application stays at version `0.9.29`. The staged engine, SDK, and helpers use `0.22.1`.
-Production still uses engine and SDK `0.11.2`.
+Execution update — 2026-10-08: production now runs engine, SDK, and helpers `0.22.1`, with application `0.9.29`.
+The fresh cold backup, original restore, migration, installed commands, graceful restart, and final preservation review passed. Writers resumed at `2026-10-08T21:27:16Z`.
+See [the current cutover results](production-cutover-results.md). The sections below retain the historical preparation evidence and its limits.
+The user waived RAM capacity checks. Those checks no longer block execution.
 
 Private evidence: `~/.agentmemory-labs/cutover-preflight-mgHfKS/`.
 Initial evidence is `evidence/preflight-summary.json`; corrections are in `preflight-summary-after-review.json`.
