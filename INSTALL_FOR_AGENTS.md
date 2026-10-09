@@ -191,6 +191,7 @@ The MCP server exposes 54 tools by default (`--tools all`). Use `--tools core` (
 - `npx -y @agentmemory/agentmemory@latest upgrade` upgrades agentmemory and the iii runtime, best effort.
 - `npx -y @agentmemory/agentmemory@latest --reset` wipes onboarding preferences and re-runs the wizard.
 - `npx -y @agentmemory/agentmemory@latest import-jsonl <file>` imports prior Claude Code session logs as memories.
+- `agentmemory insights <term> [--limit N] [--json]` searches synthesized insights on the running server without starting it. Use one distinctive term of four or more characters; exit 0 with no results means nothing matched.
 
 ## Troubleshooting
 

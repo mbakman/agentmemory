@@ -69,6 +69,13 @@ export default defineConfig([
     sourcemap: false,
   },
   {
+    entry: ["src/insights-cli.ts"],
+    outDir: "dist",
+    ...shared,
+    clean: false,
+    sourcemap: false,
+  },
+  {
     entry: ["src/mcp/standalone.ts"],
     outDir: "dist",
     ...shared,

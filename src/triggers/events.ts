@@ -11,6 +11,7 @@ import {
   getConsolidationCooldownMs,
   isAgentScopeIsolated,
   isConsolidationEnabled,
+  isGraphExtractionEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
 import { noteMemoryChange, noteSessionChange } from "../state/viewer-counts.js";
@@ -133,20 +134,21 @@ export function registerEventTriggers(sdk: IIIClient, kv: StateKV): void {
     if (isReflectEnabled()) {
       fireVoid("mem::slot-reflect", { sessionId: data.sessionId });
     }
-    // Unconditional: mem::graph-extract gates its LLM pass internally.
-    try {
-      const observations = await kv.list<CompressedObservation>(
-        KV.observations(data.sessionId),
-      );
-      const compressed = observations.filter((o) => o.title);
-      if (compressed.length > 0) {
-        fireVoid("mem::graph-extract", { observations: compressed });
+    if (isGraphExtractionEnabled()) {
+      try {
+        const observations = await kv.list<CompressedObservation>(
+          KV.observations(data.sessionId),
+        );
+        const compressed = observations.filter((o) => o.title);
+        if (compressed.length > 0) {
+          fireVoid("mem::graph-extract", { observations: compressed });
+        }
+      } catch (err) {
+        logger.warn("graph-extract trigger failed", {
+          sessionId: data.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      logger.warn("graph-extract trigger failed", {
-        sessionId: data.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
     }
     // Crystals + lessons consolidation. The stop lifecycle is the single
     // source of truth: event::session::stopped fires for ALL agents (the

@@ -7,9 +7,12 @@ vi.mock("../src/logger.js", () => ({
 vi.mock("../src/config.js", () => ({
   getConsolidationDecayDays: () => 30,
   isConsolidationEnabled: vi.fn(() => true),
+  isGraphExtractionEnabled: () => false,
+  getEnvVar: (key: string) => process.env[key],
 }));
 
 import { registerConsolidationPipelineFunction } from "../src/functions/consolidation-pipeline.js";
+import { registerReflectFunctions } from "../src/functions/reflect.js";
 import { isConsolidationEnabled } from "../src/config.js";
 import { currentAuditScope } from "./helpers/mocks.js";
 import type { SessionSummary, Memory, SemanticMemory, ProceduralMemory } from "../src/types.js";
@@ -122,8 +125,45 @@ describe("Consolidation Pipeline", () => {
   let kv: ReturnType<typeof mockKV>;
 
   beforeEach(() => {
+    vi.mocked(isConsolidationEnabled).mockReturnValue(true);
     sdk = mockSdk();
     kv = mockKV();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("forwards reflect cooldown counters and does not bypass cooldown with force", async () => {
+    vi.stubEnv("AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS", "604800000");
+    vi.mocked(isConsolidationEnabled).mockReturnValue(false);
+    const provider = {
+      name: "test", compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue('<insight confidence="0.8" title="Finding">Related evidence yields a finding.</insight>'),
+    };
+    registerReflectFunctions(sdk as never, kv as never, provider as never);
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    const timestamp = new Date().toISOString();
+    await kv.set("mem:graph:snapshot", "current", {
+      version: 1,
+      topNodes: ["alpha", "bravo"].map((name) => ({ id: `node_${name}`, type: "concept", name, properties: {}, sourceObservationIds: [], createdAt: timestamp })),
+      topEdges: [{ id: "edge", type: "related_to", sourceNodeId: "node_alpha", targetNodeId: "node_bravo", weight: 1, sourceObservationIds: [], createdAt: timestamp }],
+      topDegrees: { node_alpha: 1, node_bravo: 1 },
+      stats: { totalNodes: 2, totalEdges: 1, nodesByType: { concept: 2 }, edgesByType: { related_to: 1 } },
+      updatedAt: timestamp, dirty: false,
+    });
+    for (let i = 0; i < 3; i++) {
+      await kv.set("mem:semantic", `sem_${i}`, {
+        id: `sem_${i}`, fact: `alpha bravo evidence${i}`, confidence: 0.8,
+        sourceSessionIds: [], sourceMemoryIds: [], accessCount: 1,
+        lastAccessedAt: timestamp, strength: 0.8, createdAt: timestamp, updatedAt: timestamp,
+      });
+    }
+    const first = await sdk.trigger("mem::consolidate-pipeline", { tier: "reflect", force: true });
+    expect(first.results.reflect).toMatchObject({ success: true, clustersProcessed: 1, clustersSkipped: 0, clustersCooledDown: 0, newInsights: 1 });
+    const repeated = await sdk.trigger("mem::consolidate-pipeline", { tier: "reflect", force: true });
+    expect(repeated.results.reflect).toMatchObject({ success: true, clustersProcessed: 0, clustersSkipped: 0, clustersCooledDown: 1, newInsights: 0 });
+    expect(provider.summarize).toHaveBeenCalledOnce();
   });
 
   it("pipeline skips semantic when fewer than 5 summaries", async () => {

@@ -88,6 +88,12 @@ import { getRedisUrl, getStateBackend, getStateSaveIntervalMs, hydrateProcessEnv
 import { III_PINNED_VERSION, VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
+import { runInsightsCli } from "./cli/insights.js";
+import {
+  getWorkerReadyTimeoutMs,
+  isWorkerReadyPayload,
+  waitForWorkerReady,
+} from "./cli/worker-readiness.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -97,6 +103,9 @@ import { bearerHeaders, resolveClientSecret } from "./secret-store.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
+if (args[0] === "insights") {
+  process.exit(await runInsightsCli(args.slice(1)));
+}
 const IS_WINDOWS = platform() === "win32";
 const IS_VERBOSE =
   args.includes("--verbose") ||
@@ -207,6 +216,8 @@ Commands:
                      No arg = interactive picker. --all wires every detected agent.
                      --dry-run shows what would change. --force re-installs.
   status             Show connection status, memory count, flags, and health
+  insights <query>   Search synthesized insights on the running server.
+                     --limit N (1-100, default 10), --json. See: agentmemory insights --help
   console            Launch the iii web console for this engine (workers, functions,
                      triggers, queues, traces). --console-port N, default viewer+1
   doctor             Interactive diagnostic + fixer. [F]ix · [S]kip · [?]more · [Q]uit
@@ -247,14 +258,21 @@ Options:
 
 Environment:
   AGENTMEMORY_URL              Full REST base URL (e.g. http://localhost:3111).
-                               Honored by status, doctor, and MCP shim commands.
+                               Honored by status, doctor, insights, and MCP shim commands.
   AGENTMEMORY_DATA_DIR         State directory fallback when --data-dir is not set.
   AGENTMEMORY_USE_DOCKER=1     Prefer the bundled docker-compose path over the
                                native iii-engine binary on first run.
   AGENTMEMORY_III_VERSION      Override pinned iii-engine version (default ${IIPINNED_VERSION}).
+  AGENTMEMORY_III_CONFIG       Engine config to start from (default: ./iii-config.yaml,
+                               then ~/.agentmemory/iii-config.yaml, then the bundled
+                               loopback-only config).
   AGENTMEMORY_FOLLOWUP_WINDOW_SECONDS
                                Window (seconds) for the smart-search follow-up diagnostic
                                (default 30). Long values overcount, short values undercount.
+  AGENTMEMORY_INSIGHTS_TIMEOUT_MS
+                               Request timeout in ms for the insights command (default 10000).
+  AGENTMEMORY_WORKER_READY_TIMEOUT_MS
+                               Worker startup deadline in ms (default 120000; 1000-600000).
 
 Quick start:
   npx @agentmemory/agentmemory          # start with local iii-engine or Docker
@@ -473,13 +491,13 @@ async function isAgentmemoryReady(): Promise<boolean> {
     });
     if (!res.ok) return false;
     try {
-      const data = await res.json() as { viewerPort?: number | null; viewerSkipped?: boolean };
-      if (typeof data.viewerPort === "number") {
-        discoveredViewerPort = data.viewerPort;
-        return true;
+      const data: unknown = await res.json();
+      if (!isWorkerReadyPayload(data)) return false;
+      const { viewerPort } = data as { viewerPort?: unknown };
+      if (typeof viewerPort === "number") {
+        discoveredViewerPort = viewerPort;
       }
-      if (data.viewerSkipped) return true;
-      return false;
+      return true;
     } catch {
       return false;
     }
@@ -1808,7 +1826,7 @@ async function waitForEngine(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-async function reconcilePersistedDockerEngine(): Promise<boolean> {
+async function reconcilePersistedDockerEngine(workerReadyTimeoutMs: number): Promise<boolean> {
   const state = readEngineState();
   if (state?.kind !== "docker") return false;
   const inspection = inspectOwnedDockerEngine(state);
@@ -1845,8 +1863,7 @@ async function reconcilePersistedDockerEngine(): Promise<boolean> {
     process.exit(1);
   }
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
   await maybeOfferGlobalInstall();
@@ -1905,12 +1922,15 @@ function portInUseDiagnostic(port: number): string {
 }
 
 async function waitForAgentmemoryReady(timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await isAgentmemoryReady()) return true;
-    await new Promise((r) => setTimeout(r, 250));
+  const { ready, elapsedMs } = await waitForWorkerReady(isAgentmemoryReady, timeoutMs);
+  if (ready) {
+    vlog(`agentmemory worker became ready after ${elapsedMs / 1000}s.`);
+  } else {
+    p.log.error(
+      `agentmemory worker did not become ready after ${elapsedMs / 1000}s (timeout ${timeoutMs / 1000}s).`,
+    );
   }
-  return false;
+  return ready;
 }
 
 // Derive a host string for the streams/engine WebSocket lines from
@@ -1967,6 +1987,7 @@ function printReadyHint(): void {
 }
 
 async function main() {
+  const workerReadyTimeoutMs = getWorkerReadyTimeoutMs();
   await assertRuntimePortOwnership();
   // Booting a second instance next to a live daemon registers a duplicate
   // worker on the running engine, and before iii 0.19.2 the second instance's
@@ -2011,14 +2032,14 @@ async function main() {
   if (skipEngine) {
     if (IS_VERBOSE) p.log.info("Skipping engine check (--no-engine)");
     await import("./index.js");
-    if (await waitForAgentmemoryReady(15000)) {
+    if (await waitForAgentmemoryReady(workerReadyTimeoutMs)) {
       await maybeOfferGlobalInstall();
       printReadyHint();
     }
     return;
   }
 
-  if (await reconcilePersistedDockerEngine()) return;
+  if (await reconcilePersistedDockerEngine(workerReadyTimeoutMs)) return;
 
   if (await isEngineRunning()) {
     if (IS_VERBOSE) p.log.success("iii-engine is running");
@@ -2047,8 +2068,7 @@ async function main() {
     if (detected === IIPINNED_VERSION) {
       adoptRunningEngine();
       await startWorkerForEngineState();
-      if (!(await waitForAgentmemoryReady(15000))) {
-        p.log.error("agentmemory worker did not become ready within 15s.");
+      if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
         process.exit(1);
       }
       await maybeOfferGlobalInstall();
@@ -2158,8 +2178,7 @@ async function main() {
 
   s.stop(c.ok("iii-engine is ready"));
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
   await maybeOfferGlobalInstall();
@@ -2975,6 +2994,7 @@ async function runInit() {
 }
 
 async function startServerForDemo(): Promise<() => Promise<void>> {
+  const workerReadyTimeoutMs = getWorkerReadyTimeoutMs();
   await assertRuntimePortOwnership();
   if (await isAgentmemoryReady()) {
     return async () => {};
@@ -2997,8 +3017,7 @@ async function startServerForDemo(): Promise<() => Promise<void>> {
   }
 
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
 
@@ -4124,7 +4143,7 @@ const commands: Record<string, () => Promise<void>> = {
 const first = args[0] ?? "";
 async function unknownCommand(): Promise<void> {
   p.log.error(
-    `Unknown command: ${first}. Supported: ${Object.keys(commands).join(", ")}. Run \`agentmemory\` with no arguments to start the memory server, or \`agentmemory --help\` for usage.`,
+    `Unknown command: ${first}. Supported: ${[...Object.keys(commands), "insights"].join(", ")}. Run \`agentmemory\` with no arguments to start the memory server, or \`agentmemory --help\` for usage.`,
   );
   process.exit(1);
 }

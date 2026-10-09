@@ -225,7 +225,7 @@ async function main() {
 
   const sdk = withWriteScrubbing(registerWorker(config.engineUrl, {
     workerName: "agentmemory",
-    invocationTimeoutMs: 180000,
+    invocationTimeoutMs: 600000,
     otel: {
       serviceName: OTEL_CONFIG.serviceName,
       serviceVersion: OTEL_CONFIG.serviceVersion,
@@ -277,6 +277,7 @@ async function main() {
   }
   registerDiskSizeManager(sdk, kv);
   registerCompressFunction(sdk, kv, provider, metricsStore);
+  markKeywordRebuildPending();
   registerSearchFunction(sdk, kv);
   registerContextFunction(sdk, kv, config.tokenBudget);
   registerSessionIndexMaintenanceFunction(sdk, kv);
@@ -435,7 +436,6 @@ async function main() {
   setHybridRanker(hybridRanker);
   registerRecentSearchesSweepFunction(sdk, kv);
 
-  markKeywordRebuildPending();
   registerApiTriggers(sdk, kv, secret, metricsStore, provider);
   registerEventTriggers(sdk, kv);
   registerViewerStreamTriggers(sdk, kv, { secret, metricsStore, provider });

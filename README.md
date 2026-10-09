@@ -124,6 +124,15 @@ npm install -g @agentmemory/agentmemory@latest
 
 The npx command above remains the canonical fresh-install path and avoids global-prefix permission issues.
 
+This fork includes `npm-shrinkwrap.json` to retain the tested dependency versions. For a local tarball deployment, install the package, then reconstruct its production dependencies from that lock:
+
+```bash
+npm install -g /absolute/path/agentmemory-agentmemory-0.9.29.tgz
+npm --prefix "$(npm root -g)/@agentmemory/agentmemory" ci --omit=dev --global=false
+```
+
+With npm 11.20.0, a global install from a local tarball can select newer compatible dependencies despite the packaged lock. The second command loads the lock directly. Stop the worker before replacing its package and restart it after dependency installation finishes.
+
 </details>
 
 <details>
@@ -546,8 +555,20 @@ agentmemory                    # start the server
 agentmemory stop               # stop it cleanly
 agentmemory connect <agent>    # wire another agent
 agentmemory doctor             # interactive diagnostics + fix prompts
+agentmemory insights postgres --limit 5  # search synthesized insights
+agentmemory-insights postgres 5          # compatibility command
 agentmemory remove             # uninstall everything we created
 ```
+
+Both insight commands send one search request to the agentmemory server that is already running; neither starts a server. `insights` must be the first argument of `agentmemory`: with a flag in front, as in `agentmemory --verbose insights postgres`, the command line is treated as a server start instead of a search.
+
+The server lowercases the query, splits it on whitespace into terms, and ignores one-character terms, so the commands reject a query with no term of two or more characters (exit status 2). Each term is a case-insensitive substring match against an insight's title, content, and tags, and an insight that matches any term is returned, so `"database performance"` also returns insights that mention only one of the two words. Quotes keep words together for the shell but do not make a phrase. Results rank by confidence, the share of terms matched, and recency, and insights below 0.1 confidence are never returned. One distinctive term of four or more characters, such as `postgres`, gives the most focused results.
+
+`--limit` takes 1 to 100 and defaults to 10; `agentmemory-insights` also takes the number as its positional `max`. When more insights match than the limit, text output says so in its header and footer, and JSON output sets `"truncated": true`. `--json` prints one compact object with `success`, `query`, `limit`, `truncated`, and `insights`; each insight carries its id, title, content, confidence, score, tags, and creation and last-reinforcement timestamps. Neither format includes source-memory ID lists. `agentmemory-insights` accepts an obsolete third pool argument but ignores it with a deprecation notice.
+
+Both commands honor `AGENTMEMORY_URL` (an http or https base URL, optionally with a path prefix), `III_REST_PORT` (used when `AGENTMEMORY_URL` is unset), `AGENTMEMORY_SECRET`, and `~/.agentmemory/.env`. `AGENTMEMORY_INSIGHTS_TIMEOUT_MS` sets the total request timeout in milliseconds, from 1 to 2147483647 (default 10000). Exit status 0 covers printed results, no match, and a reader that closed the output early (for example `| head -n 1`). Exit status 1 is a configuration, connection, timeout, authentication, backend, malformed-response, or output failure, described on stderr. Exit status 2 is invalid usage, such as `--limit 101`.
+
+Local insight searches also read the generated `~/.agentmemory/secret` file. For a remote server, set `AGENTMEMORY_SECRET` in the process environment. Local credential files are used only for loopback addresses.
 
 ### Session Replay
 
@@ -1292,6 +1313,14 @@ On engine 0.22.x keep the `iii-` prefixed names for the builtins above; the unpr
 
 Full registry: [workers.iii.dev](https://workers.iii.dev). Every worker there composes through the same primitives agentmemory uses, and the agentmemory you already have is one of them.
 
+### Engine config and bind address
+
+`agentmemory start` reads the engine config from the first file that exists: `AGENTMEMORY_III_CONFIG`, `./iii-config.yaml` in the current directory, `~/.agentmemory/iii-config.yaml`, then the bundled `iii-config.yaml`. On every start it renders that file (data paths, ports, state backend) into `~/.agentmemory/data/iii-config.runtime.yaml` and launches the engine with the rendered copy, so edit the source file, not the rendered one. The `host:` values of the source file are kept as written.
+
+The bundled `iii-config.yaml` binds `127.0.0.1` on purpose, and that default also applies inside a container. A CLI started in a container listens on the container's loopback, so published ports reach nothing. To serve a containerized CLI through published ports, set `AGENTMEMORY_III_CONFIG` to a config that binds `0.0.0.0`. The packaged `iii-config.docker.yaml` is one: it binds `iii-http`, `iii-stream` and the engine port to `0.0.0.0` and stores state under `/data`, so mount a writable volume there. Keep `AGENTMEMORY_SECRET` set, and publish only the ports you need, on `127.0.0.1` or behind a proxy you trust.
+
+This repo's `docker-compose.yml` does not go through the CLI's config lookup: it mounts `iii-config.docker.yaml` at `/app/config.yaml`, and the `iii-engine` container starts with `--config /app/config.yaml`. The one-click [deploy templates](deploy/) write their own `0.0.0.0` config in their entrypoints.
+
 ### Storage backend: file (default) vs redis
 
 `iii-state` and `iii-stream` default to iii-engine's bundled file-based KV store: one JSON file per scope, held in the engine process's memory and rewritten to disk on a timer. That's the right default for a single-user local install; a shared daemon with several concurrent writers gets real per-key writes from Redis instead, at the cost of a network round trip per operation (every `state::*` call still serializes on one Redis connection, so this trades the file store's lock for a socket, not for parallelism).
@@ -1520,6 +1549,8 @@ Put agentmemory runtime configuration in `~/.agentmemory/.env` instead of export
 
 Process environment variables still work and take precedence over values in the file.
 
+The CLI allows 120 seconds for worker startup, including loading the search indexes and starting the viewer. Set `AGENTMEMORY_WORKER_READY_TIMEOUT_MS` in the shell or this file to change that deadline (integer milliseconds from 1000 through 600000). Invalid values stop server startup before the CLI starts an engine or imports a worker; client commands, help and version still work. The engine startup deadline remains 15 seconds. An HTTP liveness response alone does not mean the worker is ready: its `livez` response must report a numeric viewer port or an explicit viewer skip. Timeout errors report the elapsed wait and configured deadline.
+
 On Windows, the same file lives at `%USERPROFILE%\.agentmemory\.env`:
 
 ```powershell
@@ -1589,6 +1620,8 @@ Create `~/.agentmemory/.env`:
 # OPENAI_BASE_URL=https://api.openai.com   # Override for Azure / vLLM / LM Studio / proxies
 # OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 # OPENAI_EMBEDDING_DIMENSIONS=1536        # Required when the model is not in the known-models table
+# OPENAI_EMBEDDING_BASE_URL=https://...   # Embeddings only; falls back to OPENAI_BASE_URL
+# OPENAI_EMBEDDING_API_KEY=sk-...         # Embeddings only; wins over OPENAI_API_KEY when set
 
 # Outbound LLM / embedding timeout
 # AGENTMEMORY_LLM_TIMEOUT_MS=60000       # Default: 60 000 ms (60 s). Applies to every
@@ -1661,6 +1694,8 @@ Create `~/.agentmemory/.env`:
                                    # during graph extraction. Faster runs;
                                    # relation quality can drop slightly.
 # CONSOLIDATION_ENABLED=false   # on by default when an LLM provider is configured
+# AGENTMEMORY_REFLECT_PROMPT_CHARS=12000
+# AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS=604800000
 # LESSON_DECAY_ENABLED=true
 # OBSIDIAN_AUTO_EXPORT=false
 # AGENTMEMORY_EXPORT_ROOT=~/.agentmemory
@@ -1675,6 +1710,14 @@ Create `~/.agentmemory/.env`:
 # Tool visibility: "all" (54 tools, default) or "core" (8 tools, lean)
 # AGENTMEMORY_TOOLS=core
 ```
+
+Insight synthesis (`mem::reflect`, the reflect consolidation tier) uses the existing graph snapshot and falls back to Jaccard clustering. Each cluster contains at most 15 concepts and selects up to ten facts, ten active lessons, and five work summaries. Session-stop graph extraction runs only when `GRAPH_EXTRACTION_ENABLED=true`; direct graph extraction keeps its existing behavior.
+
+`AGENTMEMORY_REFLECT_PROMPT_CHARS` sets the synthesis prompt budget in JavaScript characters (default 12000). Invalid or nonpositive values use the default; positive values below 2000 use 2000. Each memory item is limited to 800 characters plus an ellipsis. The builder includes complete lines and preserves the concept header, which can exceed the budget. These settings control insight synthesis; `AGENTMEMORY_REFLECT` controls the separate slot-reflection feature.
+
+`AGENTMEMORY_REFLECT_CLUSTER_COOLDOWN_MS` sets the cooldown for repeated concept clusters (default 604800000 milliseconds, or seven days). Invalid or negative values use the default; zero disables cooldown reads and writes. The cooldown key is shared across projects. Synthesis marks a cluster after the provider returns, even if the response yields no valid insight. Provider failures do not mark a cluster. Reflect results and audit records include `clustersCooledDown`; forcing consolidation does not bypass this cooldown.
+
+The worker invocation timeout and both bundled HTTP configuration templates use 600000 milliseconds to allow sequential cluster synthesis. Reinstall the built fork package to retain these source fixes.
 
 ---
 

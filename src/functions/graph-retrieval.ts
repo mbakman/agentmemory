@@ -4,6 +4,8 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
+import { logger } from "../logger.js";
+import { LIVE_ENUMERATION_BUDGET_MS, withTimeout } from "./graph.js";
 
 export interface GraphRetrievalResult {
   obsId: string;
@@ -46,8 +48,25 @@ export class GraphRetrieval {
     maxDepth = 2,
     maxResults = 20,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    let allNodes: GraphNode[];
+    let allEdges: GraphEdge[];
+    try {
+      const [rawNodes, rawEdges] = await withTimeout(
+        Promise.all([
+          this.kv.list<GraphNode>(KV.graphNodes),
+          this.kv.list<GraphEdge>(KV.graphEdges),
+        ]),
+        LIVE_ENUMERATION_BUDGET_MS,
+        "graph-retrieval enumeration",
+      );
+      allNodes = rawNodes.filter((n) => !n.stale);
+      allEdges = rawEdges.filter((e) => !e.stale);
+    } catch (err) {
+      logger.warn("graph retrieval enumeration failed, skipping graph stream", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
 
     const matchingNodes = allNodes.filter((n) => {
       const nameLower = n.name.toLowerCase();
@@ -119,8 +138,25 @@ export class GraphRetrieval {
     maxDepth = 1,
     maxResults = 10,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    let allNodes: GraphNode[];
+    let allEdges: GraphEdge[];
+    try {
+      const [rawNodes, rawEdges] = await withTimeout(
+        Promise.all([
+          this.kv.list<GraphNode>(KV.graphNodes),
+          this.kv.list<GraphEdge>(KV.graphEdges),
+        ]),
+        LIVE_ENUMERATION_BUDGET_MS,
+        "graph-retrieval enumeration",
+      );
+      allNodes = rawNodes.filter((n) => !n.stale);
+      allEdges = rawEdges.filter((e) => !e.stale);
+    } catch (err) {
+      logger.warn("graph retrieval enumeration failed, skipping graph stream", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
 
     const linkedNodes = allNodes.filter((n) =>
       n.sourceObservationIds.some((id) => obsIds.includes(id)),

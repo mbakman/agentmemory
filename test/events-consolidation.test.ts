@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import type { CompressedObservation } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -38,7 +40,7 @@ function mockKV() {
     set: vi.fn(async (_scope: string, _key: string, data: unknown) => data),
     delete: vi.fn(async () => {}),
     update: vi.fn(async () => {}),
-    list: vi.fn(async () => []),
+    list: vi.fn(async (_scope: string): Promise<CompressedObservation[]> => []),
   };
 }
 
@@ -76,6 +78,21 @@ function mockSdk(opts?: { rejectFor?: string }) {
 
 function functionIds(trigger: ReturnType<typeof vi.fn>): string[] {
   return trigger.mock.calls.map((c) => (c[0] as { function_id: string }).function_id);
+}
+
+function observation(id: string, title: string, sessionId = "ses_1"): CompressedObservation {
+  return {
+    id,
+    sessionId,
+    timestamp: "2026-10-05T12:00:00.000Z",
+    type: "file_edit",
+    title,
+    facts: [],
+    narrative: "",
+    concepts: ["authentication"],
+    files: ["src/auth.ts"],
+    importance: 0.5,
+  };
 }
 
 describe("event::session::stopped consolidation fan-out", () => {
@@ -206,6 +223,149 @@ describe("event::session::stopped consolidation fan-out", () => {
   });
 });
 
+describe("session-stop graph extraction gate", () => {
+  beforeEach(() => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(false);
+    vi.mocked(isConsolidationEnabled).mockReturnValue(true);
+    vi.mocked(isReflectEnabled).mockReturnValue(true);
+    vi.mocked(getConsolidationCooldownMs).mockReturnValue(300000);
+    vi.mocked(logger.warn).mockClear();
+  });
+
+  it("skips observation enumeration and heuristic fan-out when disabled", async () => {
+    const kv = mockKV();
+    kv.list.mockResolvedValue([observation("obs_1", "Authentication updated")]);
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+
+    const summary = await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+
+    expect(kv.list).not.toHaveBeenCalled();
+    expect(functionIds(trigger)).toEqual([
+      "mem::summarize",
+      "mem::slot-reflect",
+      "mem::consolidate-pipeline",
+      "mem::auto-crystallize",
+    ]);
+    expect(summary).toEqual({ summary: "session summary", sessionId: "ses_1" });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("extracts titled observations when enabled and preserves other work", async () => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    const compressed = [
+      observation("obs_1", "Authentication updated"),
+      observation("obs_2", "JWT validation added"),
+    ];
+    const kv = mockKV();
+    kv.list.mockResolvedValue([...compressed, observation("obs_3", "")]);
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+
+    const summary = await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+
+    expect(kv.list).toHaveBeenCalledExactlyOnceWith(KV.observations("ses_1"));
+    expect(trigger).toHaveBeenCalledWith(expect.objectContaining({
+      function_id: "mem::graph-extract",
+      payload: { observations: compressed },
+    }));
+    expect(functionIds(trigger)).toEqual([
+      "mem::summarize",
+      "mem::slot-reflect",
+      "mem::graph-extract",
+      "mem::consolidate-pipeline",
+      "mem::auto-crystallize",
+    ]);
+    expect(summary).toEqual({ summary: "session summary", sessionId: "ses_1" });
+  });
+
+  it.each([
+    { name: "empty observations", observations: [] },
+    { name: "observations without titles", observations: [observation("obs_1", "")] },
+  ])("skips extraction for $name", async ({ observations }) => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    const kv = mockKV();
+    kv.list.mockResolvedValue(observations);
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+
+    await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+
+    expect(kv.list).toHaveBeenCalledExactlyOnceWith(KV.observations("ses_1"));
+    expect(functionIds(trigger)).not.toContain("mem::graph-extract");
+    expect(functionIds(trigger)).toContain("mem::consolidate-pipeline");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns on a failed read and preserves summary, reflect, and consolidation", async () => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    const kv = mockKV();
+    kv.list.mockRejectedValue(new Error("observations unavailable"));
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+
+    const summary = await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+
+    expect(summary).toEqual({ summary: "session summary", sessionId: "ses_1" });
+    expect(functionIds(trigger)).toEqual([
+      "mem::summarize",
+      "mem::slot-reflect",
+      "mem::consolidate-pipeline",
+      "mem::auto-crystallize",
+    ]);
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+      "graph-extract trigger failed",
+      { sessionId: "ses_1", error: "observations unavailable" },
+    );
+  });
+
+  it("contains an extraction trigger failure without losing the stop response", async () => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    const kv = mockKV();
+    kv.list.mockResolvedValue([observation("obs_1", "Authentication updated")]);
+    const { sdk, handlers, trigger } = mockSdk({ rejectFor: "mem::graph-extract" });
+    registerEventTriggers(sdk as never, kv as never);
+
+    const summary = await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+    await Promise.resolve();
+
+    expect(summary).toEqual({ summary: "session summary", sessionId: "ses_1" });
+    expect(functionIds(trigger)).toContain("mem::consolidate-pipeline");
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+      "mem::graph-extract trigger failed",
+      { sessionId: "ses_1", error: "boom: mem::graph-extract" },
+    );
+  });
+
+  it("extracts each concurrent session while consolidating only once", async () => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    const kv = persistentKV();
+    kv.list.mockImplementation(async (scope: string) => {
+      const sessionId = scope === KV.observations("ses_1") ? "ses_1" : "ses_2";
+      return [observation(`obs_${sessionId}`, "Authentication updated", sessionId)];
+    });
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+    const stopped = handlers.get("event::session::stopped")!;
+
+    await Promise.all([
+      stopped({ sessionId: "ses_1" }),
+      stopped({ sessionId: "ses_2" }),
+    ]);
+
+    expect(kv.list.mock.calls).toEqual([
+      [KV.observations("ses_1")],
+      [KV.observations("ses_2")],
+    ]);
+    const ids = functionIds(trigger);
+    expect(ids.filter((id) => id === "mem::summarize")).toHaveLength(2);
+    expect(ids.filter((id) => id === "mem::slot-reflect")).toHaveLength(2);
+    expect(ids.filter((id) => id === "mem::graph-extract")).toHaveLength(2);
+    expect(ids.filter((id) => id === "mem::consolidate-pipeline")).toHaveLength(1);
+    expect(ids.filter((id) => id === "mem::auto-crystallize")).toHaveLength(1);
+  });
+});
+
 // The client session-end hook is bundled into a standalone binary that reads
 // stdin and POSTs to REST, so it is exercised at the source level: after the
 // double-fire fix it must no longer POST the two direct consolidation
@@ -252,7 +412,7 @@ function persistentKV() {
     }),
     delete: vi.fn(async () => {}),
     update: vi.fn(async () => {}),
-    list: vi.fn(async () => []),
+    list: vi.fn(async (_scope: string): Promise<CompressedObservation[]> => []),
   };
 }
 
