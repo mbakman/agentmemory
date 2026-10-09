@@ -386,7 +386,7 @@ The engine startup deadline and worker readiness predicate remain unchanged.
 - [x] Obtain Fable review at effort `max`.
 - [x] Package and install the fix; test ordinary CLI startup against the unchanged production engine.
 - [x] Verify recall, insight search, viewer access, and exactly one worker.
-- [ ] Commit and publish only to `mbakman/agentmemory`.
+- [x] Commit and publish only to `mbakman/agentmemory`.
 
 No production data copy, dead-letter replay, engine replacement, or main merge is part of this repair.
 
@@ -406,8 +406,15 @@ Authenticated status and viewer access returned HTTP 200. Keyword indexing was c
 The 502 earlier dead letters remain unchanged. This repair does not replay them or establish a full record preservation comparison.
 
 The first global npm install selected seven newer dependency versions.
-The published package now includes `npm-shrinkwrap.json`, byte-identical to the tested dependency lock.
+The final package now includes `npm-shrinkwrap.json`, byte-identical to the tested dependency lock.
 Local `npm ci --omit=dev` inside the installed package restored all 186 production dependencies to tested versions.
 The native ONNX binding loaded successfully. All 286 packaged application files match the final private tarball.
 README records this two-step workflow for local tarball deployment with npm 11.20.0.
 The worker binaries remain byte-identical to the prior package; the startup repair changes the CLI.
+
+Source commit `1fdd4ed7056e93b94acda7813eb69b87956768d7` is pushed to both `codex/fix-worker-startup` and `codex/upstream-0221` in the user fork.
+Draft PR [#1](https://github.com/mbakman/agentmemory/pull/1) includes the repair and current validation results.
+No main merge or npm registry publication occurred.
+The initial Fable plan and implementation review passed. An additional packaging consultation produced no verdict after about ten minutes and received SIGTERM.
+The exact dependency comparison, package-file comparison, native binding load, and live command checks establish the package acceptance evidence.
+Private logs, the previous runtime `.env`, package artifacts, and receipts remain in the startup-repair report directory.
