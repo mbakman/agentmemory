@@ -360,3 +360,54 @@ The verified secondary CLI client received SIGTERM after its exact command and p
 A main-note annotation attempt returned empty output. That latest annotation is also unconfirmed.
 The five earlier core note updates passed uncached readback before these attempts. Source and private receipts retain the explicit backup decision.
 Complete the remaining vault annotation after manual Obsidian recovery under the CLI skill. Production engine and worker identities remained unchanged.
+
+## Worker startup repair — 2026-10-08
+
+The user reported that `agentmemory --verbose` stopped after loading and replaying the vector index.
+The CLI required full worker readiness within 15 seconds. An earlier measured index startup took approximately 39 seconds.
+The bundled worker runs inside the CLI process, so the timeout also terminated that worker. The detached engine remained running.
+
+The engine now runs as PID `12522`, using version `0.22.1` and the original production storage paths.
+Worker PID `32854` reached Ready through the installed worker entrypoint in tmux window `worker`.
+Authenticated status reported a complete keyword index, connected file storage, and no pending vector backfill.
+This recovery does not repair the CLI timeout. It keeps production available while the source fix is tested.
+
+The previous launch policy is now saved in the private runtime `.env` file.
+Scheduled generation and retention remain disabled during the Sol trial. Automatic observation compression remains enabled.
+The prior `.env` file and recovery log are retained under the private startup-repair report directory.
+
+Implementation uses `codex/fix-worker-startup`, based on integration commit `d8806d4ae58f17262001276b349f1a4b920ecce7`.
+The source fix gives all five worker startup paths one validated timeout, with a 120-second default.
+The engine startup deadline and worker readiness predicate remain unchanged.
+
+- [x] Identify the failing startup path and recover the production worker.
+- [x] Preserve the previous launch policy in runtime configuration.
+- [x] Complete behavioral regression tests and the required build, test suite, and skill checks.
+- [x] Obtain Fable review at effort `max`.
+- [x] Package and install the fix; test ordinary CLI startup against the unchanged production engine.
+- [x] Verify recall, insight search, viewer access, and exactly one worker.
+- [ ] Commit and publish only to `mbakman/agentmemory`.
+
+No production data copy, dead-letter replay, engine replacement, or main merge is part of this repair.
+
+`npm run build` passed. The final `npm test` run passed 2,958 tests in 244 files, with two tests skipped.
+`npm run skills:check` passed all 17 skills. Behavioral tests cover readiness at 39 seconds, stalled probes, and configuration validation.
+Fable reviewed the plan and implementation with native 1M context at effort `max` and returned READY.
+
+The original worker exited after SIGTERM. Engine PID `12522` stayed running throughout package activation.
+Ordinary installed `agentmemory --verbose` reached Ready after **36.651 seconds**.
+Worker PID `44845` runs in the `worker` window of tmux session `agentmemory`.
+A second CLI start returned the existing-instance diagnostic and did not create another worker.
+
+The pinned MCP bridge returned 54 tools and the exact same ten known `force_set` result IDs as the prior acceptance probe.
+Both installed insight entrypoints returned two compact results with the requested limit and no source-memory ID lists.
+The empty-token probe returned zero results. Authentication and refused-connection probes returned exit `1` with distinct diagnostics.
+Authenticated status and viewer access returned HTTP 200. Keyword indexing was complete, and live capture continued.
+The 502 earlier dead letters remain unchanged. This repair does not replay them or establish a full record preservation comparison.
+
+The first global npm install selected seven newer dependency versions.
+The published package now includes `npm-shrinkwrap.json`, byte-identical to the tested dependency lock.
+Local `npm ci --omit=dev` inside the installed package restored all 186 production dependencies to tested versions.
+The native ONNX binding loaded successfully. All 286 packaged application files match the final private tarball.
+README records this two-step workflow for local tarball deployment with npm 11.20.0.
+The worker binaries remain byte-identical to the prior package; the startup repair changes the CLI.

@@ -92,7 +92,7 @@ describe("fresh native engine startup", () => {
     expect(workerBody).toContain('await import("./index.js")');
 
     expect(source.match(/await startWorkerForEngineState\(\)/g)).toHaveLength(4);
-    expect(source).toContain("agentmemory worker did not become ready within 15s");
+    expect(source).toContain("agentmemory worker did not become ready after ${elapsedMs / 1000}s");
   });
 
   it("stores lifecycle metadata per resolved instance and scopes Docker", () => {
@@ -123,8 +123,8 @@ describe("fresh native engine startup", () => {
     const mainStart = source.indexOf("async function main()");
     const mainEnd = source.indexOf("async function apiFetch", mainStart);
     const mainBody = source.slice(mainStart, mainEnd);
-    expect(mainBody).toContain("reconcilePersistedDockerEngine()");
-    expect(mainBody.indexOf("reconcilePersistedDockerEngine()"))
+    expect(mainBody).toContain("reconcilePersistedDockerEngine(workerReadyTimeoutMs)");
+    expect(mainBody.indexOf("reconcilePersistedDockerEngine(workerReadyTimeoutMs)"))
       .toBeLessThan(mainBody.indexOf("if (await isEngineRunning())"));
   });
 

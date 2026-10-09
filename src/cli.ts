@@ -89,6 +89,11 @@ import { III_PINNED_VERSION, VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
 import { runInsightsCli } from "./cli/insights.js";
+import {
+  getWorkerReadyTimeoutMs,
+  isWorkerReadyPayload,
+  waitForWorkerReady,
+} from "./cli/worker-readiness.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -266,6 +271,8 @@ Environment:
                                (default 30). Long values overcount, short values undercount.
   AGENTMEMORY_INSIGHTS_TIMEOUT_MS
                                Request timeout in ms for the insights command (default 10000).
+  AGENTMEMORY_WORKER_READY_TIMEOUT_MS
+                               Worker startup deadline in ms (default 120000; 1000-600000).
 
 Quick start:
   npx @agentmemory/agentmemory          # start with local iii-engine or Docker
@@ -484,13 +491,13 @@ async function isAgentmemoryReady(): Promise<boolean> {
     });
     if (!res.ok) return false;
     try {
-      const data = await res.json() as { viewerPort?: number | null; viewerSkipped?: boolean };
-      if (typeof data.viewerPort === "number") {
-        discoveredViewerPort = data.viewerPort;
-        return true;
+      const data: unknown = await res.json();
+      if (!isWorkerReadyPayload(data)) return false;
+      const { viewerPort } = data as { viewerPort?: unknown };
+      if (typeof viewerPort === "number") {
+        discoveredViewerPort = viewerPort;
       }
-      if (data.viewerSkipped) return true;
-      return false;
+      return true;
     } catch {
       return false;
     }
@@ -1819,7 +1826,7 @@ async function waitForEngine(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-async function reconcilePersistedDockerEngine(): Promise<boolean> {
+async function reconcilePersistedDockerEngine(workerReadyTimeoutMs: number): Promise<boolean> {
   const state = readEngineState();
   if (state?.kind !== "docker") return false;
   const inspection = inspectOwnedDockerEngine(state);
@@ -1856,8 +1863,7 @@ async function reconcilePersistedDockerEngine(): Promise<boolean> {
     process.exit(1);
   }
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
   await maybeOfferGlobalInstall();
@@ -1916,12 +1922,15 @@ function portInUseDiagnostic(port: number): string {
 }
 
 async function waitForAgentmemoryReady(timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await isAgentmemoryReady()) return true;
-    await new Promise((r) => setTimeout(r, 250));
+  const { ready, elapsedMs } = await waitForWorkerReady(isAgentmemoryReady, timeoutMs);
+  if (ready) {
+    vlog(`agentmemory worker became ready after ${elapsedMs / 1000}s.`);
+  } else {
+    p.log.error(
+      `agentmemory worker did not become ready after ${elapsedMs / 1000}s (timeout ${timeoutMs / 1000}s).`,
+    );
   }
-  return false;
+  return ready;
 }
 
 // Derive a host string for the streams/engine WebSocket lines from
@@ -1978,6 +1987,7 @@ function printReadyHint(): void {
 }
 
 async function main() {
+  const workerReadyTimeoutMs = getWorkerReadyTimeoutMs();
   await assertRuntimePortOwnership();
   // Booting a second instance next to a live daemon registers a duplicate
   // worker on the running engine, and before iii 0.19.2 the second instance's
@@ -2022,14 +2032,14 @@ async function main() {
   if (skipEngine) {
     if (IS_VERBOSE) p.log.info("Skipping engine check (--no-engine)");
     await import("./index.js");
-    if (await waitForAgentmemoryReady(15000)) {
+    if (await waitForAgentmemoryReady(workerReadyTimeoutMs)) {
       await maybeOfferGlobalInstall();
       printReadyHint();
     }
     return;
   }
 
-  if (await reconcilePersistedDockerEngine()) return;
+  if (await reconcilePersistedDockerEngine(workerReadyTimeoutMs)) return;
 
   if (await isEngineRunning()) {
     if (IS_VERBOSE) p.log.success("iii-engine is running");
@@ -2058,8 +2068,7 @@ async function main() {
     if (detected === IIPINNED_VERSION) {
       adoptRunningEngine();
       await startWorkerForEngineState();
-      if (!(await waitForAgentmemoryReady(15000))) {
-        p.log.error("agentmemory worker did not become ready within 15s.");
+      if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
         process.exit(1);
       }
       await maybeOfferGlobalInstall();
@@ -2169,8 +2178,7 @@ async function main() {
 
   s.stop(c.ok("iii-engine is ready"));
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
   await maybeOfferGlobalInstall();
@@ -2986,6 +2994,7 @@ async function runInit() {
 }
 
 async function startServerForDemo(): Promise<() => Promise<void>> {
+  const workerReadyTimeoutMs = getWorkerReadyTimeoutMs();
   await assertRuntimePortOwnership();
   if (await isAgentmemoryReady()) {
     return async () => {};
@@ -3008,8 +3017,7 @@ async function startServerForDemo(): Promise<() => Promise<void>> {
   }
 
   await startWorkerForEngineState();
-  if (!(await waitForAgentmemoryReady(15000))) {
-    p.log.error("agentmemory worker did not become ready within 15s.");
+  if (!(await waitForAgentmemoryReady(workerReadyTimeoutMs))) {
     process.exit(1);
   }
 

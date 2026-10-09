@@ -50,6 +50,7 @@
     "observation"
   ],
   "files": [
+    "npm-shrinkwrap.json",
     "dist/",
     "plugin/",
     "integrations/pi/",

@@ -124,6 +124,15 @@ npm install -g @agentmemory/agentmemory@latest
 
 The npx command above remains the canonical fresh-install path and avoids global-prefix permission issues.
 
+This fork includes `npm-shrinkwrap.json` to retain the tested dependency versions. For a local tarball deployment, install the package, then reconstruct its production dependencies from that lock:
+
+```bash
+npm install -g /absolute/path/agentmemory-agentmemory-0.9.29.tgz
+npm --prefix "$(npm root -g)/@agentmemory/agentmemory" ci --omit=dev --global=false
+```
+
+With npm 11.20.0, a global install from a local tarball can select newer compatible dependencies despite the packaged lock. The second command loads the lock directly. Stop the worker before replacing its package and restart it after dependency installation finishes.
+
 </details>
 
 <details>
@@ -1539,6 +1548,8 @@ taskkill /F /PID <pid>
 Put agentmemory runtime configuration in `~/.agentmemory/.env` instead of exporting variables in every shell. If the viewer shows a setup hint like `export ANTHROPIC_API_KEY=...`, copy it into this file as `ANTHROPIC_API_KEY=...` without the `export` prefix, then restart agentmemory.
 
 Process environment variables still work and take precedence over values in the file.
+
+The CLI allows 120 seconds for worker startup, including loading the search indexes and starting the viewer. Set `AGENTMEMORY_WORKER_READY_TIMEOUT_MS` in the shell or this file to change that deadline (integer milliseconds from 1000 through 600000). Invalid values stop server startup before the CLI starts an engine or imports a worker; client commands, help and version still work. The engine startup deadline remains 15 seconds. An HTTP liveness response alone does not mean the worker is ready: its `livez` response must report a numeric viewer port or an explicit viewer skip. Timeout errors report the elapsed wait and configured deadline.
 
 On Windows, the same file lives at `%USERPROFILE%\.agentmemory\.env`:
 
